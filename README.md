@@ -1,6 +1,6 @@
 # ATV — Agent Trajectory Visualizer
 
-![A rider on an ATV climbing a trail made of user, tool and assistant turns](atv.svg)
+![A rider on an ATV climbing a trail made of user, tool and assistant turns](assets/atv-header.png)
 
 A quick-and-dirty browser view for going off-road through your coding-agent sessions: every
 project, every session, every turn, live as it happens. It reads [Claude Code](https://claude.com/claude-code)
