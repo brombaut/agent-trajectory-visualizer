@@ -29,26 +29,8 @@ npm install   # once; Electron is the only dependency
 npm start     # starts its own server on a free port and opens the window
 ```
 
-Closing the window quits the app and stops its server. Starting it again while it is running
-focuses the existing window. Window size is remembered in `~/.config/ATV/window.json`; position is
-too, except on Wayland, which does not let apps place their own windows.
-
-**Sandbox error on first start.** On recent Ubuntu, Electron aborts with "The SUID sandbox helper
-binary was found, but is not configured correctly", because the distro restricts unprivileged user
-namespaces. Fix it as the message says, from this directory. It needs root, and needs redoing
-whenever `npm install` replaces the Electron binary:
-
-```sh
-sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-```
-
-**Launcher entry (optional).** To get ATV in the application menu with its own icon, so it can be
-started without a terminal, install `atv.desktop` with the path of this checkout filled in. Run
-this from this directory, and again if the directory moves:
-
-```sh
-sed "s|@REPO@|$PWD|g" atv.desktop > ~/.local/share/applications/atv.desktop
-```
+Closing the window quits the app. For the sandbox error Electron gives on recent Ubuntu, and for
+adding ATV to the application menu, see [electron/README.md](electron/README.md).
 
 ## The terrain
 
@@ -70,33 +52,8 @@ Everything is read-only, and the server only listens on localhost, since session
 
 ## Configuration
 
-Optional, and shared by both ways of running. To look somewhere else, or in several places, write
-a JSON file. The first of these wins:
-
-1. `--config <path>` (`python3 server.py --config <path>` or `npm start -- --config <path>`)
-2. the `ATV_CONFIG` environment variable
-3. `$XDG_CONFIG_HOME/atv/config.json`, or `~/.config/atv/config.json` when that is unset
-4. no file: the defaults in the table above
-
-```json
-{
-  "port": 8765,
-  "scaffolds": {
-    "claude": { "paths": ["~/.claude/projects", "~/synced/laptop/claude-projects"] },
-    "opencode": { "paths": ["~/.local/share/opencode/opencode.db"] }
-  }
-}
-```
-
-- Every key is optional; anything left out keeps its default.
-- `paths` is a list, so a scaffold can have several locations. An empty list turns that scaffold off.
-- `~` and environment variables (`$HOME`, `${NAME}`) are expanded.
-- A listed path that does not exist is skipped with a warning.
-- Malformed JSON, an unknown scaffold name, or a file named by `--config` / `ATV_CONFIG` that is missing
-  stops the server at startup with an error naming the file.
-- The port is taken from the command line (`python3 server.py 9000` or `--port 9000`), then the file, then 8765.
-  `--port 0` lets the OS pick a free one; the server prints `listening on http://127.0.0.1:<port>` either way.
-  The desktop app always uses a free port and ignores `port`.
+Optional. To look somewhere else, or in several places, write a JSON config file:
+see [CONFIG.md](CONFIG.md).
 
 ## Under the hood
 

@@ -20,10 +20,12 @@ Changes to `server.py` need a server restart.
 - `index.html`: the entire frontend (CSS and JS inline).
 - `test_server.py`: plain-assert checks for the parsers and the tailing logic.
 - `assets/`: README images, and `icon.png` (the app icon, cropped from the banner).
+- `CONFIG.md`: the config file reference, kept out of the main README.
+- `electron/README.md`: desktop app notes kept out of the main README (sandbox fix, launcher entry).
 - `electron/main.js`: the desktop shell. Spawns `server.py --port 0`, reads the port from its
   `listening on` line, opens a window on it, and kills the server on quit. No preload, no bundler.
 - `package.json`, `package-lock.json`: only there to pin Electron and provide `npm start`.
-- `atv.desktop`: launcher entry template; `@REPO@` is replaced on install (see README).
+- `atv.desktop`: launcher entry template; `@REPO@` is replaced on install (see `electron/README.md`).
 
 ## Ground rules
 
