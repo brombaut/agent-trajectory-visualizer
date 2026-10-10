@@ -36,6 +36,13 @@ with tempfile.TemporaryDirectory() as tmp:
 
     assert server.claude_info(f)["title"] == "hello" and server.claude_info(f)["cwd"] == "/x"
 
+    # a message queued while the agent works is only an attachment; show it as a user turn,
+    # but not the task notifications that share the attachment type
+    queued = lambda **a: server.claude_events({"type": "attachment", "attachment": {"type": "queued_command", **a}}, 0)[0]
+    q = queued(prompt="wait", commandMode="prompt", origin={"kind": "human"})
+    assert (q["kind"], q["text"]) == ("user", "wait"), q
+    assert queued(prompt="<task-notification>", commandMode="task-notification")["kind"] == "meta"
+
     # the same relative path in two roots gives two sessions with distinct ids
     (r1 / "proj").mkdir(parents=True)
     (r1 / "proj/abc.jsonl").write_text(json.dumps({"type": "user", "uuid": "o1", "message": {"content": "other"}}) + "\n")

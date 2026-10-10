@@ -173,6 +173,10 @@ def claude_events(d, n):
                    text=d.get("content") or "", extra=d)]
     if t == "attachment":
         a = d.get("attachment") or {}
+        # A message typed while the agent was working is logged only as this attachment, never as a
+        # user record. Task notifications and subagent hand-backs share the type but aren't human.
+        if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+            return [ev(0, "user", text=text_of(a.get("prompt")))]
         return [ev(0, "meta", name=a.get("type"), extra=a)]
     return []  # bookkeeping records (mode, file-history-*, last-prompt, ...)
 
