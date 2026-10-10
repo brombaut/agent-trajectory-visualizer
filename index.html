@@ -41,9 +41,9 @@
   .t, .r { flex: none; color: #7d8590; }
   .b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   [open] > summary .b { color: #7d8590; }
-  .body { padding: 4px 10px 10px 128px; }
+  .body { padding: 4px 10px 10px 128px; cursor: pointer; }
   h4 { margin: 8px 0 2px; font-size: 11px; color: #7d8590; font-weight: 400; text-transform: uppercase; }
-  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; cursor: auto; }
   h4 + pre { background: #101216; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
 </style>
 
@@ -201,6 +201,10 @@ function row(e) {
   d.append(s);
   // Bodies can be huge; build them only when first opened.
   d.addEventListener('toggle', () => { if (d.open && d.children.length === 1) d.append(body(e)); });
+  // Clicking the expanded area around the content collapses it (but not while selecting text).
+  d.addEventListener('click', ev => {
+    if (ev.target.closest('.body') && !ev.target.closest('pre') && !getSelection().toString()) d.open = false;
+  });
   d.open = expanded;
   return d;
 }
