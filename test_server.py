@@ -1,14 +1,18 @@
 """Run: python3 test_server.py"""
 import json
+import os
+import sqlite3
 import tempfile
 from pathlib import Path
 
 import server
 
 with tempfile.TemporaryDirectory() as tmp:
-    server.CLAUDE = Path(tmp)
-    (Path(tmp) / "proj").mkdir()
-    f = Path(tmp) / "proj/abc.jsonl"
+    tmp = Path(tmp)
+    r0, r1 = tmp / "r0", tmp / "r1"
+    server.CLAUDE = [r0, r1]
+    (r0 / "proj").mkdir(parents=True)
+    f = r0 / "proj/abc.jsonl"
     recs = [
         {"type": "user", "uuid": "u1", "cwd": "/x", "message": {"content": "hello"}},
         {"type": "mode", "mode": "normal"},
@@ -22,21 +26,99 @@ with tempfile.TemporaryDirectory() as tmp:
     ]
     f.write_text("".join(json.dumps(r) + "\n" for r in recs) + '{"type": "user", "uuid": "half')
 
-    events, cursor = server.claude_tail("proj/abc", 0)
+    events, cursor = server.claude_tail("0/proj/abc", 0)
     assert [e["kind"] for e in events] == ["user", "assistant", "tool", "result"], events
     assert events[2]["id"] == events[3]["tool"] == "t1"
     assert events[3]["output"] == "boom\n[image]" and events[3]["error"]
     # the half-written last line is not consumed, and re-polling yields nothing new
     assert cursor == f.stat().st_size - len('{"type": "user", "uuid": "half')
-    assert server.claude_tail("proj/abc", cursor) == ([], cursor)
+    assert server.claude_tail("0/proj/abc", cursor) == ([], cursor)
 
     assert server.claude_info(f)["title"] == "hello" and server.claude_info(f)["cwd"] == "/x"
 
-    try:
-        server.claude_tail("../../etc/passwd", 0)
-        raise AssertionError("path traversal allowed")
-    except ValueError:
-        pass
+    # a message queued while the agent works is only an attachment; show it as a user turn,
+    # but not the task notifications that share the attachment type
+    queued = lambda **a: server.claude_events({"type": "attachment", "attachment": {"type": "queued_command", **a}}, 0)[0]
+    q = queued(prompt="wait", commandMode="prompt", origin={"kind": "human"})
+    assert (q["kind"], q["text"]) == ("user", "wait"), q
+    assert queued(prompt="<task-notification>", commandMode="task-notification")["kind"] == "meta"
+
+    # the same relative path in two roots gives two sessions with distinct ids
+    (r1 / "proj").mkdir(parents=True)
+    (r1 / "proj/abc.jsonl").write_text(json.dumps({"type": "user", "uuid": "o1", "message": {"content": "other"}}) + "\n")
+    (tmp / "secret.jsonl").write_text("{}\n")
+    assert sorted(s["id"] for s in server.claude_sessions()) == ["0/proj/abc", "1/proj/abc"]
+    assert server.claude_tail("1/proj/abc", 0)[0][0]["text"] == "other"
+
+    # ids are untrusted: each must stay inside the root it names, and name a root that exists
+    for bad in ["0/../r1/proj/abc", "0/../secret", "1/../r0/proj/abc", "0/../../etc/passwd", f"0/{r1}/proj/abc",
+                "../../etc/passwd", "proj/abc", "2/proj/abc", "-1/proj/abc", "x/proj/abc", "", "/"]:
+        try:
+            server.claude_tail(bad, 0)
+            raise AssertionError(f"bad id allowed: {bad!r}")
+        except ValueError:
+            pass
+
+    # opencode: the id prefix picks the database
+    dbs = [tmp / "a.db", tmp / "b.db"]
+    for n, dbp in enumerate(dbs):
+        db = sqlite3.connect(dbp)
+        db.execute("create table session_v2 (id, parent_id, title, directory, time_updated)")
+        db.execute("create table session_message (id, session_id, type, time_updated, data, seq)")
+        db.execute("insert into session_v2 values ('s', null, ?, '/x', 1), ('k', 's', 'kid', '/x', 2)", (f"db{n}",))
+        db.execute("insert into session_message values ('m', 's', 'user', 5, ?, 1)", (json.dumps({"text": f"hi{n}"}),))
+        db.commit()
+        db.close()
+    server.OPENCODE = dbs
+    assert [(s["id"], s["parent"], s["title"]) for s in server.opencode_sessions()] == [
+        ("0/s", None, "db0"), ("0/k", "0/s", "kid"), ("1/s", None, "db1"), ("1/k", "1/s", "kid")]
+    events, cursor = server.opencode_tail("1/s", 0)
+    assert events[0]["text"] == "hi1" and cursor == 5
+    for bad in ["2/s", "s", "-1/s"]:
+        try:
+            server.opencode_tail(bad, 0)
+            raise AssertionError(f"bad id allowed: {bad!r}")
+        except ValueError:
+            pass
+
+    # config: no file means the built-in defaults
+    os.environ.pop("ATV_CONFIG", None)
+    os.environ["XDG_CONFIG_HOME"] = str(tmp / "xdg")
+    assert server.load_config() == (None, {
+        "claude": [Path.home() / ".claude/projects"],
+        "opencode": [Path.home() / ".local/share/opencode/opencode.db"]})
+
+    # overrides, with ~ and $VAR expanded; a missing path is skipped; an empty list turns a scaffold off
+    cfg = tmp / "xdg/atv/config.json"
+    cfg.parent.mkdir(parents=True)
+    os.environ["ATV_TEST_ROOT"] = str(tmp)
+    cfg.write_text(json.dumps({"port": 9, "scaffolds": {
+        "claude": {"paths": ["$ATV_TEST_ROOT/r0", "$ATV_TEST_ROOT/nope", "~"]}, "opencode": {"paths": []}}}))
+    want = (9, {"claude": [r0, Path.home()], "opencode": []})
+    assert server.load_config() == want                      # found via XDG_CONFIG_HOME
+    os.environ["XDG_CONFIG_HOME"] = str(tmp / "elsewhere")
+    assert server.load_config(str(cfg)) == want              # --config
+    os.environ["ATV_CONFIG"] = str(cfg)
+    assert server.load_config() == want                      # ATV_CONFIG
+    server.OPENCODE = want[1]["opencode"]
+    assert server.opencode_sessions() == []
+
+    # a partial file keeps the other defaults
+    cfg.write_text(json.dumps({"scaffolds": {"opencode": {"paths": [str(dbs[0])]}}}))
+    assert server.load_config() == (None, {"claude": [Path.home() / ".claude/projects"], "opencode": [dbs[0]]})
+
+    # startup errors name the file
+    for text in ["{nope", json.dumps({"scaffolds": {"cursor": {"paths": []}}}), None]:
+        if text is None:
+            cfg.unlink()  # an explicitly named file has to exist
+        else:
+            cfg.write_text(text)
+        try:
+            server.load_config()
+            raise AssertionError(f"bad config accepted: {text!r}")
+        except SystemExit as e:
+            assert str(cfg) in str(e), e
+    del os.environ["ATV_CONFIG"]
 
 oc = server.opencode_events("m1", "assistant", {"time": {"created": 1}, "content": [
     {"type": "reasoning", "text": ""},

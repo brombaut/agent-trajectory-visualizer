@@ -8,6 +8,7 @@ quick and dirty: a personal tool, not a product. Keep it small.
 ```sh
 python3 server.py [port]   # serve on http://127.0.0.1:8765 (default port)
 python3 test_server.py     # self-check; prints "ok"
+npm start                  # desktop window (Electron); run `npm install` once first
 ```
 
 `index.html` is read from disk on every request, so frontend edits only need a browser refresh.
@@ -18,11 +19,18 @@ Changes to `server.py` need a server restart.
 - `server.py`: finds sessions, normalizes both formats into one event shape, serves JSON.
 - `index.html`: the entire frontend (CSS and JS inline).
 - `test_server.py`: plain-assert checks for the parsers and the tailing logic.
-- `assets/`: README images.
+- `assets/`: README images, and `icon.png` (the app icon, cropped from the banner).
+- `electron/main.js`: the desktop shell. Spawns `server.py --port 0`, reads the port from its
+  `listening on` line, opens a window on it, and kills the server on quit. No preload, no bundler.
+- `package.json`, `package-lock.json`: only there to pin Electron and provide `npm start`.
+- `atv.desktop`: launcher entry template; `@REPO@` is replaced on install (see README).
 
 ## Ground rules
 
 - Python standard library only, and no frontend dependencies or build step. Don't add either without asking.
+  The one exception is `electron` as a devDependency for the desktop shell; nothing else goes in `package.json`.
+- The Electron window keeps `contextIsolation`, no `nodeIntegration`, no preload, the Chromium sandbox,
+  and navigation limited to the local server origin. Don't relax these.
 - Don't split files or add abstractions for their own sake; one server file and one HTML file is the design.
 - Never write to the session stores. Everything under `~/.claude` and the opencode database is opened read-only.
 - The server must stay bound to `127.0.0.1` and keep the `Host` header check; sessions contain secrets.

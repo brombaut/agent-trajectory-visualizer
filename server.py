@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Agent trajectory visualizer for Claude Code + opencode sessions.
 
-Run:  python3 server.py [port]   ->  http://127.0.0.1:8765
+Run:  python3 server.py [port] [--port N] [--config FILE]   ->  http://127.0.0.1:8765
 
 Every event sent to the browser is normalized to:
   {id, kind: user|assistant|thinking|tool|result|system|meta, ts, text?, name?, input?, output?, error?, extra?}
 """
+import argparse
 import json
+import os
 import sqlite3
 import sys
 from contextlib import closing
@@ -14,9 +16,50 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-CLAUDE = Path.home() / ".claude/projects"
-OPENCODE = Path.home() / ".local/share/opencode/opencode.db"
+DEFAULTS = {"claude": ["~/.claude/projects"], "opencode": ["~/.local/share/opencode/opencode.db"]}
+CLAUDE = [Path(p).expanduser() for p in DEFAULTS["claude"]]      # roots; session ids are "<root index>/<rest>"
+OPENCODE = [Path(p).expanduser() for p in DEFAULTS["opencode"]]
 HERE = Path(__file__).parent
+
+
+def load_config(path=None):
+    """-> (port or None, {scaffold: [Path, ...]}). A problem with the file exits, naming it."""
+    explicit = path or os.environ.get("ATV_CONFIG")
+    f = Path(explicit or Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config") / "atv/config.json").expanduser()
+    port, roots = None, {k: [Path(p).expanduser() for p in v] for k, v in DEFAULTS.items()}
+    if not explicit and not f.exists():
+        return port, roots
+    try:
+        cfg = json.loads(f.read_text())
+        port = cfg.get("port")
+        if port is not None and type(port) is not int:
+            raise ValueError("port must be a number")
+        scaffolds = cfg.get("scaffolds", {})
+        if unknown := sorted(set(scaffolds) - set(DEFAULTS)):
+            raise ValueError(f"unknown scaffold {', '.join(unknown)} (known: {', '.join(DEFAULTS)})")
+        for name, sc in scaffolds.items():
+            if "paths" not in sc:
+                continue
+            if not isinstance(sc["paths"], list):
+                raise ValueError(f"scaffolds.{name}.paths must be a list")
+            roots[name] = []
+            for raw in sc["paths"]:
+                p = Path(os.path.expandvars(raw)).expanduser()
+                if p.exists():
+                    roots[name].append(p)
+                else:
+                    print(f"warning: {f}: {name} path {p} does not exist, skipping", file=sys.stderr)
+    except (OSError, ValueError, TypeError, AttributeError) as e:  # the last two: wrong JSON shape
+        raise SystemExit(f"config {f}: {e}")
+    return port, roots
+
+
+def split_root(sid, roots):
+    """'<root index>/<rest>' -> (root, rest). Ids come from the browser, so a bad index is a ValueError."""
+    i, _, rest = sid.partition("/")
+    if not (i.isascii() and i.isdigit()) or int(i) >= len(roots):
+        raise ValueError("bad session id")
+    return roots[int(i)], rest
 
 
 def text_of(content):
@@ -37,7 +80,8 @@ def text_of(content):
 _info_cache = {}  # path -> ((mtime, size), info)
 
 
-def claude_info(p):
+def claude_info(p, i=0):
+    """i is the index of the root in CLAUDE that p was found under."""
     st = p.stat()
     key = (st.st_mtime, st.st_size)
     if p in _info_cache and _info_cache[p][0] == key:
@@ -59,16 +103,16 @@ def claude_info(p):
                 p_ = " ".join(text_of((d.get("message") or {}).get("content")).split())
                 if not p_.startswith(("<", "[")):  # slash-command wrappers, tool results, interrupts
                     prompt = p_
-    rel = p.relative_to(CLAUDE).with_suffix("")
+    rel = p.relative_to(CLAUDE[i]).with_suffix("")
     parent = None
     if rel.parent.name == "subagents":
-        parent = str(rel.parent.parent)
+        parent = f"{i}/{rel.parent.parent}"
         meta = p.with_suffix(".meta.json")
         if meta.exists():
             m = json.loads(meta.read_text())
             title = f"{m.get('agentType', 'agent')}: {m.get('description', '')}"
     info = {
-        "source": "claude", "id": str(rel), "parent": parent, "cwd": cwd or "",
+        "source": "claude", "id": f"{i}/{rel}", "parent": parent, "cwd": cwd or "",
         "title": title or (prompt or "(untitled)")[:120], "updated": int(st.st_mtime * 1000),
     }
     _info_cache[p] = (key, info)
@@ -77,11 +121,12 @@ def claude_info(p):
 
 def claude_sessions():
     out = []
-    for p in [*CLAUDE.glob("*/*.jsonl"), *CLAUDE.glob("*/*/subagents/*.jsonl")]:
-        try:
-            out.append(claude_info(p))
-        except (OSError, ValueError) as e:
-            print(f"skip {p}: {e}", file=sys.stderr)
+    for i, root in enumerate(CLAUDE):
+        for p in [*root.glob("*/*.jsonl"), *root.glob("*/*/subagents/*.jsonl")]:
+            try:
+                out.append(claude_info(p, i))
+            except (OSError, ValueError) as e:
+                print(f"skip {p}: {e}", file=sys.stderr)
     return out
 
 
@@ -128,13 +173,18 @@ def claude_events(d, n):
                    text=d.get("content") or "", extra=d)]
     if t == "attachment":
         a = d.get("attachment") or {}
+        # A message typed while the agent was working is logged only as this attachment, never as a
+        # user record. Task notifications and subagent hand-backs share the type but aren't human.
+        if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+            return [ev(0, "user", text=text_of(a.get("prompt")))]
         return [ev(0, "meta", name=a.get("type"), extra=a)]
     return []  # bookkeeping records (mode, file-history-*, last-prompt, ...)
 
 
 def claude_tail(sid, offset):
-    p = (CLAUDE / (sid + ".jsonl")).resolve()
-    if not p.is_relative_to(CLAUDE.resolve()):
+    root, rel = split_root(sid, CLAUDE)
+    p = (root / (rel + ".jsonl")).resolve()
+    if not p.is_relative_to(root.resolve()):  # must stay inside the root the id names
         raise ValueError("bad session id")
     events = []
     with open(p, "rb") as f:
@@ -153,22 +203,26 @@ def claude_tail(sid, offset):
 
 # ---------- opencode: sqlite, rows are updated in place while streaming ----------
 
-def oc_db():
-    return sqlite3.connect(f"file:{OPENCODE}?mode=ro", uri=True)
+def oc_db(path):
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
 
 
 def opencode_sessions():
-    if not OPENCODE.exists():
-        return []
-    try:
-        with closing(oc_db()) as db:
-            rows = db.execute(
-                "select id, parent_id, title, directory, time_updated from session_v2").fetchall()
-    except sqlite3.Error as e:
-        print(f"opencode: {e}", file=sys.stderr)
-        return []
-    return [{"source": "opencode", "id": i, "parent": par, "title": title or "(untitled)",
-             "cwd": cwd or "", "updated": upd} for i, par, title, cwd, upd in rows]
+    out = []
+    for n, path in enumerate(OPENCODE):
+        if not path.exists():
+            continue
+        try:
+            with closing(oc_db(path)) as db:
+                rows = db.execute(
+                    "select id, parent_id, title, directory, time_updated from session_v2").fetchall()
+        except sqlite3.Error as e:
+            print(f"opencode {path}: {e}", file=sys.stderr)
+            continue
+        out += [{"source": "opencode", "id": f"{n}/{i}", "parent": par and f"{n}/{par}",
+                 "title": title or "(untitled)", "cwd": cwd or "", "updated": upd}
+                for i, par, title, cwd, upd in rows]
+    return out
 
 
 def opencode_events(mid, typ, d):
@@ -210,7 +264,8 @@ def opencode_events(mid, typ, d):
 
 def opencode_tail(sid, since):
     # >= so a row rewritten within the cursor's millisecond isn't missed; the browser dedupes.
-    with closing(oc_db()) as db:
+    path, sid = split_root(sid, OPENCODE)
+    with closing(oc_db(path)) as db:
         rows = db.execute(
             "select id, type, time_updated, data from session_message"
             " where session_id = ? and time_updated >= ? order by seq", (sid, since)).fetchall()
@@ -276,6 +331,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    print(f"http://127.0.0.1:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    ap = argparse.ArgumentParser(description="Agent trajectory visualizer")
+    ap.add_argument("port_arg", nargs="?", type=int, metavar="port", help="same as --port")
+    ap.add_argument("--port", type=int, help="port to listen on; 0 picks a free one (default 8765)")
+    ap.add_argument("--config", help="config file (default: $ATV_CONFIG, then ~/.config/atv/config.json)")
+    args = ap.parse_args()
+    cfg_port, roots = load_config(args.config)
+    CLAUDE, OPENCODE = roots["claude"], roots["opencode"]
+    port = next(p for p in (args.port, args.port_arg, cfg_port, 8765) if p is not None)
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    # The Electron wrapper parses this line from a pipe: keep the wording and the flush.
+    print(f"listening on http://127.0.0.1:{srv.server_port}", flush=True)
+    srv.serve_forever()
