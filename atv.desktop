@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ATV
+Comment=Agent Trajectory Visualizer
+# @REPO@ is a placeholder for the absolute path of this checkout; see "Desktop app" in README.md.
+Exec=@REPO@/node_modules/electron/dist/electron @REPO@
+Icon=@REPO@/assets/icon.png
+Terminal=false
+Categories=Development;
+StartupWMClass=atv
