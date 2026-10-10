@@ -178,8 +178,8 @@ function upsert(e) {
 function brief(e) {
   if (e.kind !== 'tool') return (e.text || '').trim().slice(0, 400);
   const i = e.input || {};
-  const arg = i.command ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.url ?? i.query
-    ?? i.description ?? i.prompt ?? Object.values(i).find(v => typeof v === 'string') ?? '';
+  const arg = i.description ?? i.command ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.url ?? i.query
+    ?? i.prompt ?? Object.values(i).find(v => typeof v === 'string') ?? '';
   return String(arg).slice(0, 400);
 }
 
@@ -214,7 +214,9 @@ function body(e) {
   };
   sec(null, e.text);
   if (e.kind === 'tool') {
-    for (const [k, v] of Object.entries(e.input || {})) sec('input · ' + k, v);
+    // description first: it gives context before the command itself
+    const input = Object.entries(e.input || {}).sort(([a], [b]) => (b === 'description') - (a === 'description'));
+    for (const [k, v] of input) sec('input · ' + k, v);
     sec(e.error ? 'error' : 'output', e.output ?? '(no result yet)');
   }
   sec('details', e.extra);
