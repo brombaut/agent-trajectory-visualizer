@@ -7,6 +7,7 @@
   body { margin: 0; height: 100vh; display: flex; background: #14161a; color: #d6d9de;
          font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
   aside { width: 340px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #2a2e35; }
+  #projects { width: 210px; overflow-y: auto; padding-top: 8px; }
   #q { margin: 8px; padding: 6px 8px; background: #1c1f25; color: inherit; border: 1px solid #2a2e35; border-radius: 4px; font: inherit; }
   #list { overflow-y: auto; flex: 1; }
   .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid transparent; }
@@ -46,6 +47,7 @@
   h4 + pre { background: #101216; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
 </style>
 
+<aside id="projects"></aside>
 <aside>
   <input id="q" placeholder="filter sessions…">
   <div id="list"></div>
@@ -68,7 +70,7 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-let sessions = [], cur = null, cursor = 0, gen = 0, expanded = false;
+let sessions = [], project = null /* cwd; null = all */, cur = null, cursor = 0, gen = 0, expanded = false;
 const byId = new Map();   // event id -> {e, json, node}
 
 const ago = ms => {
@@ -77,17 +79,45 @@ const ago = ms => {
 };
 const key = s => `${s.source}/${s.id}`;
 
+const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el('span', '', ago(ms));
+
+function renderProjects() {
+  const groups = new Map();
+  for (const s of sessions) {
+    const g = groups.get(s.project) ?? { cwd: s.project, n: 0, updated: 0 };
+    g.n += !s.depth;
+    g.updated = Math.max(g.updated, s.updated);
+    groups.set(s.project, g);
+  }
+  const rows = [...groups.values()].sort((a, b) => b.updated - a.updated);
+  rows.unshift({ cwd: null, n: rows.reduce((n, g) => n + g.n, 0), updated: rows[0]?.updated ?? 0 });
+  $('projects').replaceChildren(...rows.map(g => {
+    const d = el('div', 's' + (g.cwd === project ? ' active' : ''));
+    const sub = el('div', 'sub');
+    sub.append(el('span', 'cwd', `${g.n} session${g.n === 1 ? '' : 's'}`), stamp(g.updated));
+    d.append(el('div', 'ti', g.cwd === null ? 'All projects' : g.cwd.split('/').pop() || '(unknown)'), sub);
+    d.title = g.cwd ?? '';
+    d.onclick = () => {
+      project = g.cwd;
+      const latest = sessions.find(s => s.project === project);   // list is newest-first
+      latest ? select(latest) : renderList();                     // "All projects" keeps the current session
+    };
+    return d;
+  }));
+}
+
 function renderList() {
+  renderProjects();
   const q = $('q').value.toLowerCase();
   $('list').replaceChildren(...sessions
+    .filter(s => project === null || s.project === project)
     .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
     .map(s => {
       const d = el('div', 's' + (cur && key(cur) === key(s) ? ' active' : ''));
       d.style.paddingLeft = 10 + s.depth * 16 + 'px';
       const sub = el('div', 'sub');
-      const live = Date.now() - s.updated < 60e3;
       sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
-                 el('span', live ? 'live' : '', live ? '● live' : ago(s.updated)));
+                 stamp(s.updated));
       d.append(el('div', 'ti', (s.depth ? '↳ ' : '') + s.title), sub);
       d.title = s.title;
       d.onclick = () => select(s);
@@ -97,9 +127,12 @@ function renderList() {
 
 async function loadSessions() {
   sessions = await (await fetch('/api/sessions')).json();
+  // Subagents follow their parent's project (the list arrives parent-first).
+  let root;
+  for (const s of sessions) s.project = (s.depth ? root : root = s).cwd;
   if (!cur && location.hash) {
     const s = sessions.find(s => key(s) === decodeURIComponent(location.hash.slice(1)));
-    if (s) return select(s);
+    if (s) { project = s.project; return select(s); }
   }
   renderList();
 }
