@@ -1,0 +1,205 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Agent trajectories</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; scrollbar-color: #3a3f48 transparent; }
+  body { margin: 0; height: 100vh; display: flex; background: #14161a; color: #d6d9de;
+         font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  aside { width: 340px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #2a2e35; }
+  #q { margin: 8px; padding: 6px 8px; background: #1c1f25; color: inherit; border: 1px solid #2a2e35; border-radius: 4px; font: inherit; }
+  #list { overflow-y: auto; flex: 1; }
+  .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid transparent; }
+  .s:hover { background: #1c1f25; }
+  .s.active { background: #232831; border-left-color: #6ea8fe; }
+  .s .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s .sub { color: #7d8590; font-size: 11px; display: flex; gap: 6px; }
+  .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #2a2e35; }
+  .src.claude { color: #e8a87c; } .src.opencode { color: #7cc4e8; }
+  .live { color: #5fd38d; }
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #2a2e35; }
+  #title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { font: inherit; color: inherit; background: #232831; border: 1px solid #2a2e35; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  #events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+  .ev { border-left: 3px solid #444; margin: 2px 0; background: #191c21; border-radius: 0 4px 4px 0; }
+  .ev.user { border-color: #6ea8fe; margin-top: 14px; background: #1a2130; }
+  .ev.assistant { border-color: #5fd38d; }
+  .ev.thinking { border-color: #b08cf0; opacity: .8; }
+  .ev.tool { border-color: #e0b354; }
+  .ev.err { border-color: #f0706a; }
+  .ev.meta { display: none; opacity: .6; }
+  .show-meta .ev.meta { display: block; }
+  summary { display: flex; gap: 10px; padding: 4px 8px; cursor: pointer; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { background: #ffffff0a; }
+  .k { flex: none; width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .user .k { color: #6ea8fe; } .assistant .k { color: #5fd38d; } .thinking .k { color: #b08cf0; }
+  .tool .k { color: #e0b354; } .err .k, .err .r { color: #f0706a; }
+  .t, .r { flex: none; color: #7d8590; }
+  .b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  [open] > summary .b { color: #7d8590; }
+  .body { padding: 4px 10px 10px 128px; }
+  h4 { margin: 8px 0 2px; font-size: 11px; color: #7d8590; font-weight: 400; text-transform: uppercase; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+  h4 + pre { background: #101216; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
+</style>
+
+<aside>
+  <input id="q" placeholder="filter sessions…">
+  <div id="list"></div>
+</aside>
+<main>
+  <header>
+    <span id="title">Select a session</span>
+    <label><input type="checkbox" id="meta"> meta</label>
+    <button id="expand">Expand all</button>
+  </header>
+  <div id="events"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+
+let sessions = [], cur = null, cursor = 0, gen = 0, expanded = false;
+const byId = new Map();   // event id -> {e, json, node}
+
+const ago = ms => {
+  const s = (Date.now() - ms) / 1000;
+  return s < 60 ? 'now' : s < 3600 ? `${s / 60 | 0}m` : s < 86400 ? `${s / 3600 | 0}h` : `${s / 86400 | 0}d`;
+};
+const key = s => `${s.source}/${s.id}`;
+
+function renderList() {
+  const q = $('q').value.toLowerCase();
+  $('list').replaceChildren(...sessions
+    .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
+    .map(s => {
+      const d = el('div', 's' + (cur && key(cur) === key(s) ? ' active' : ''));
+      d.style.paddingLeft = 10 + s.depth * 16 + 'px';
+      const sub = el('div', 'sub');
+      const live = Date.now() - s.updated < 60e3;
+      sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
+                 el('span', live ? 'live' : '', live ? '● live' : ago(s.updated)));
+      d.append(el('div', 'ti', (s.depth ? '↳ ' : '') + s.title), sub);
+      d.title = s.title;
+      d.onclick = () => select(s);
+      return d;
+    }));
+}
+
+async function loadSessions() {
+  sessions = await (await fetch('/api/sessions')).json();
+  if (!cur && location.hash) {
+    const s = sessions.find(s => key(s) === decodeURIComponent(location.hash.slice(1)));
+    if (s) return select(s);
+  }
+  renderList();
+}
+
+function select(s) {
+  cur = s; cursor = 0; gen++;
+  byId.clear();
+  $('events').replaceChildren();
+  $('title').textContent = `${s.title}  ·  ${s.cwd}`;
+  location.hash = key(s);
+  renderList();
+  poll();
+}
+
+async function poll() {
+  if (!cur) return;
+  const g = gen, first = cursor === 0;
+  const r = await fetch(`/api/events?source=${cur.source}&id=${encodeURIComponent(cur.id)}&cursor=${cursor}`);
+  if (!r.ok) throw new Error(await r.text());
+  const data = await r.json();
+  if (g !== gen) return;   // user switched sessions mid-request
+  cursor = data.cursor;
+  const box = $('events');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  data.events.forEach(upsert);
+  if (first || atBottom) box.scrollTop = box.scrollHeight;   // follow live output unless scrolled up
+}
+
+function upsert(e) {
+  if (e.kind === 'result') {   // Claude logs tool results as separate records; fold into the call
+    const call = byId.get(e.tool);
+    e = call ? { ...call.e, output: e.output, error: e.error }
+             : { ...e, kind: 'tool', name: 'tool result' };
+  }
+  const old = byId.get(e.id), json = JSON.stringify(e);
+  if (old && old.json === json) return;
+  const node = row(e);
+  if (old) { node.open = old.node.open; old.node.replaceWith(node); }
+  else $('events').append(node);
+  byId.set(e.id, { e, json, node });
+}
+
+function brief(e) {
+  if (e.kind !== 'tool') return (e.text || '').trim().slice(0, 400);
+  const i = e.input || {};
+  const arg = i.command ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.url ?? i.query
+    ?? i.description ?? i.prompt ?? Object.values(i).find(v => typeof v === 'string') ?? '';
+  return String(arg).slice(0, 400);
+}
+
+function time(ts) {
+  const t = el('span', 't', ts ? new Date(ts).toLocaleTimeString() : '');
+  if (ts) t.title = new Date(ts).toLocaleString();
+  return t;
+}
+
+function row(e) {
+  const d = el('details', `ev ${e.kind}${e.error ? ' err' : ''}`);
+  const s = el('summary');
+  s.append(el('span', 'k', e.kind === 'tool' || !['user', 'assistant', 'thinking'].includes(e.kind) ? e.name || e.kind : e.kind),
+           time(e.ts),
+           el('span', 'b', brief(e)));
+  if (e.kind === 'tool')
+    s.append(el('span', 'r', e.output == null ? 'running…'
+      : `${e.error ? '✗' : '✓'} ${e.output ? e.output.split('\n').length : 0} lines`));
+  d.append(s);
+  // Bodies can be huge; build them only when first opened.
+  d.addEventListener('toggle', () => { if (d.open && d.children.length === 1) d.append(body(e)); });
+  d.open = expanded;
+  return d;
+}
+
+function body(e) {
+  const b = el('div', 'body');
+  const sec = (label, v) => {
+    if (v == null || v === '') return;
+    if (label) b.append(el('h4', '', label));
+    b.append(el('pre', '', typeof v === 'string' ? v : JSON.stringify(v, null, 2)));
+  };
+  sec(null, e.text);
+  if (e.kind === 'tool') {
+    for (const [k, v] of Object.entries(e.input || {})) sec('input · ' + k, v);
+    sec(e.error ? 'error' : 'output', e.output ?? '(no result yet)');
+  }
+  sec('details', e.extra);
+  return b;
+}
+
+$('q').oninput = renderList;
+$('meta').onchange = e => $('events').classList.toggle('show-meta', e.target.checked);
+$('expand').onclick = () => {
+  expanded = !expanded;
+  $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';
+  for (const { node } of byId.values()) node.open = expanded;
+};
+
+async function loop(fn, ms) {
+  try { await fn(); } catch (err) { console.error(err); }
+  setTimeout(loop, ms, fn, ms);
+}
+loop(loadSessions, 5000);
+loop(poll, 1500);
+</script>
