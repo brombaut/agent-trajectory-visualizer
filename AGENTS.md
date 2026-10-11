@@ -21,7 +21,8 @@ server, so there that means restarting the app. Changes to `electron/main.js` al
 - `server.py`: finds sessions, normalizes both formats into one event shape, serves JSON.
 - `index.html`: the entire frontend (CSS and JS inline).
 - `test_server.py`: plain-assert checks for the parsers and the tailing logic.
-- `assets/`: README images, and `icon.png` (the app icon, cropped from the banner).
+- `assets/`: README images, and `icon.png` (the app icon, cropped from the banner). The `*-dark.png` files are the
+  originals from the old dark theme, kept but unused.
 - `README.md`: kept short on purpose, just what ATV is and how to run it. Reference detail goes in
   `CONFIG.md` (the config file) and `electron/README.md` (desktop app notes: sandbox fix, launcher
   entry), which the README links to.
