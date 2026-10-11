@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -119,12 +120,31 @@ def claude_info(p, i=0):
     return info
 
 
+def claude_live():
+    """Session id -> status (busy, idle, waiting, ...) of the Claude Code processes still running.
+
+    Each one keeps a <pid>.json in the sessions dir beside the projects dir. The transcript alone can't
+    tell an idle session from a closed one, and never shows a pending permission prompt."""
+    out = {}
+    for root in CLAUDE:
+        for f in (root.parent / "sessions").glob("*.json"):
+            try:
+                d = json.loads(f.read_text())
+                if os.name == "posix":
+                    os.kill(d["pid"], 0)  # signal 0 sends nothing; it raises if the process is gone
+                out[d["sessionId"]] = d.get("status")
+            except (OSError, ValueError, KeyError, TypeError):  # stale or half-written file
+                pass
+    return out
+
+
 def claude_sessions():
-    out = []
+    out, live = [], claude_live()
     for i, root in enumerate(CLAUDE):
         for p in [*root.glob("*/*.jsonl"), *root.glob("*/*/subagents/*.jsonl")]:
             try:
-                out.append(claude_info(p, i))
+                # idle: turn finished; waiting: blocked on a permission prompt or a question
+                out.append({**claude_info(p, i), "waiting": live.get(p.stem) in ("idle", "waiting")})
             except (OSError, ValueError) as e:
                 print(f"skip {p}: {e}", file=sys.stderr)
     return out
@@ -215,13 +235,17 @@ def opencode_sessions():
         try:
             with closing(oc_db(path)) as db:
                 rows = db.execute(
-                    "select id, parent_id, title, directory, time_updated from session_v2").fetchall()
+                    "select id, parent_id, title, directory, time_updated, (select type from session_message"
+                    " where session_id = s.id order by seq desc limit 1) from session_v2 s").fetchall()
         except sqlite3.Error as e:
             print(f"opencode {path}: {e}", file=sys.stderr)
             continue
         out += [{"source": "opencode", "id": f"{n}/{i}", "parent": par and f"{n}/{par}",
-                 "title": title or "(untitled)", "cwd": cwd or "", "updated": upd}
-                for i, par, title, cwd, upd in rows]
+                 "title": title or "(untitled)", "cwd": cwd or "", "updated": upd,
+                 # An idle message ends each turn. ponytail: nothing says whether opencode is still
+                 # running, so a day-old one counts as closed; use a process check if one turns up.
+                 "waiting": last == "idle" and not par and upd > time.time() * 1000 - 86400e3}
+                for i, par, title, cwd, upd, last in rows]
     return out
 
 

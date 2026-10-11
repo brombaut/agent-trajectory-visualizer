@@ -7,13 +7,16 @@
   body { margin: 0; height: 100vh; display: flex; background: #14161a; color: #d6d9de;
          font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
   aside { width: 340px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #2a2e35; }
-  #projects { width: 210px; overflow-y: auto; padding-top: 8px; }
-  #q { margin: 8px; padding: 6px 8px; background: #1c1f25; color: inherit; border: 1px solid #2a2e35; border-radius: 4px; font: inherit; }
-  #list { overflow-y: auto; flex: 1; }
-  .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid transparent; }
-  .s:hover { background: #1c1f25; }
-  .s.active { background: #232831; border-left-color: #6ea8fe; }
-  .s.open { border-left-color: #6ea8fe; }
+  #proj, #q { margin: 8px 8px 0; padding: 6px 8px; background: #1c1f25; color: inherit; border: 1px solid #2a2e35; border-radius: 4px; font: inherit; }
+  #proj summary { display: block; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #projs { max-height: 50vh; overflow-y: auto; margin-top: 6px; }
+  #projs label { display: flex; gap: 6px; align-items: center; cursor: pointer; white-space: nowrap; }
+  .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: hsl(var(--h) 60% 55%); }
+  #list { overflow-y: auto; flex: 1; margin-top: 8px; }
+  /* --h is the project hue, set on session rows and on panes */
+  .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid hsl(var(--h) 60% 55% / .5); background: hsl(var(--h) 60% 55% / .08); }
+  .s:hover { background: hsl(var(--h) 60% 55% / .16); }
+  .s.active { background: hsl(var(--h) 60% 55% / .3); border-left-color: #6ea8fe; }
   .s .ti, .ph .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .s .sub { color: #7d8590; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -31,9 +34,10 @@
   .pane:first-child .grip { display: none; }
   body > .grip { position: relative; left: 0; flex: none; margin: 0 -3px; }
   .pane + .pane { border-left: 1px solid #2a2e35; }
-  .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #2a2e35; }
+  .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #2a2e35;
+        background: hsl(var(--h) 60% 55% / .3); }
   .ph .ti { flex: 1; }
-  .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+  .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; background: hsl(var(--h) 60% 55% / .06); }
   .ev { border-left: 3px solid #444; margin: 2px 0; background: #191c21; border-radius: 0 4px 4px 0; }
   .ev.user { border-color: #6ea8fe; margin-top: 14px; background: #1a2130; }
   .ev.assistant { border-color: #5fd38d; }
@@ -57,9 +61,8 @@
   h4 + pre { background: #101216; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
 </style>
 
-<aside id="projects"></aside>
-<div class="grip"></div>
 <aside>
+  <details id="proj"><summary></summary><div id="projs"></div></details>
   <input id="q" placeholder="filter sessions…">
   <div id="list"></div>
 </aside>
@@ -81,8 +84,8 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-let sessions = [], project = null /* cwd; null = all */, expanded = false;
-const panes = [];   // open sessions, one column each: {s, cursor, byId: event id -> {e, json, node}, node, box}
+let sessions = [], projects = new Set() /* cwds to list; empty = all */, expanded = false;
+const panes = [];   // open sessions, one column each: {s, cursor, byId: event id -> {e, json, node}, node, box, ti}
 
 const ago = ms => {
   const s = (Date.now() - ms) / 1000;
@@ -91,6 +94,13 @@ const ago = ms => {
 const key = s => `${s.source}/${s.id}`;
 const pane = s => panes.find(p => key(p.s) === key(s));
 const adding = ev => ev.ctrlKey || ev.metaKey;   // Ctrl/Cmd+click adds a column instead of replacing
+
+const hue = p => {   // a project's colour: hashed from its path, so it never changes
+  let h = 0;
+  for (const c of p) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h % 360;
+};
+const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
 
 const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el('span', '', ago(ms));
 
@@ -103,38 +113,41 @@ function renderProjects() {
     groups.set(s.project, g);
   }
   const rows = [...groups.values()].sort((a, b) => b.updated - a.updated);
-  rows.unshift({ cwd: null, n: rows.reduce((n, g) => n + g.n, 0), updated: rows[0]?.updated ?? 0 });
-  const open = new Set(panes.map(p => p.s.project));
-  $('projects').replaceChildren(...rows.map(g => {
-    const d = el('div', 's' + (g.cwd === project ? ' active' : '') + (open.has(g.cwd) ? ' open' : ''));
-    const sub = el('div', 'sub');
-    sub.append(el('span', 'cwd', `${g.n} session${g.n === 1 ? '' : 's'}`), stamp(g.updated));
-    d.append(el('div', 'ti', g.cwd === null ? 'All projects' : g.cwd.split('/').pop() || '(unknown)'), sub);
-    d.title = g.cwd ?? '';
-    d.onclick = ev => {
-      project = g.cwd;
-      const latest = sessions.find(s => s.project === project);   // list is newest-first; none for "All projects"
-      if (latest && adding(ev)) pane(latest) || openPane(latest);
-      else if (latest && panes.length < 2) return select(latest);
-      sync();   // with several columns open a plain click only filters the list
-    };
-    return d;
-  }));
+  for (const p of projects) if (!groups.has(p)) projects.delete(p);   // no sessions left
+  const name = cwd => cwd.split('/').pop() || '(unknown)';
+  $('proj').firstElementChild.textContent = '▾ ' + (projects.size
+    ? rows.filter(g => projects.has(g.cwd)).map(g => name(g.cwd)).join(', ')
+    : `All projects (${rows.reduce((n, g) => n + g.n, 0)})`);
+  const box = $('projs'), sig = rows.map(g => g.cwd + g.n).join();
+  if (box.dataset.sig !== sig) {   // rebuilt only on change, to keep its scroll position and focus
+    box.dataset.sig = sig;
+    box.replaceChildren(...rows.map(g => {
+      const l = el('label'), c = el('input'), sw = el('span', 'sw');
+      c.type = 'checkbox';
+      c.onchange = () => { projects[c.checked ? 'add' : 'delete'](g.cwd); renderList(); };
+      sw.style.setProperty('--h', hue(g.cwd));
+      l.append(c, sw, `${name(g.cwd)} (${g.n})`);
+      l.title = g.cwd;
+      return l;
+    }));
+  }
+  rows.forEach((g, i) => box.children[i].firstChild.checked = projects.has(g.cwd));
 }
 
 function renderList() {
   renderProjects();
   const q = $('q').value.toLowerCase();
   $('list').replaceChildren(...sessions
-    .filter(s => project === null || s.project === project)
+    .filter(s => !projects.size || projects.has(s.project))
     .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
     .map(s => {
       const d = el('div', 's' + (pane(s) ? ' active' : ''));
+      d.style.setProperty('--h', hue(s.project));
       d.style.paddingLeft = 10 + s.depth * 16 + 'px';
       const sub = el('div', 'sub');
       sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
                  stamp(s.updated));
-      d.append(el('div', 'ti', (s.depth ? '↳ ' : '') + s.title), sub);
+      d.append(el('div', 'ti', title(s)), sub);
       d.title = s.title;
       d.onclick = ev => adding(ev) ? toggle(s) : select(s);
       return d;
@@ -151,7 +164,7 @@ async function loadSessions() {
     const whole = find(h);   // old single-session hashes were not encoded, so may contain a comma
     const found = whole ? [whole] : h.split(',').map(find).filter(Boolean);
     if (found.length) {
-      project = found.every(s => s.project === found[0].project) ? found[0].project : null;
+      projects = new Set(found.every(s => s.project === found[0].project) ? [found[0].project] : []);
       found.forEach(openPane);
       return sync();
     }
@@ -159,17 +172,18 @@ async function loadSessions() {
   let gone = false;
   for (const p of [...panes]) {   // a session that vanished drops its column; the rest carry on
     const s = sessions.find(s => key(s) === key(p.s));
-    if (s) p.s = s; else { closePane(p); gone = true; }
+    if (s) p.ti.textContent = `${title(p.s = s)}  ·  ${s.cwd}`; else { closePane(p); gone = true; }
   }
   gone ? sync() : renderList();
 }
 
 function openPane(s) {
-  const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events') };
+  const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
+              ti: el('span', 'ti', `${title(s)}  ·  ${s.cwd}`) };
   const head = el('div', 'ph'), x = el('button', '', '×');
   x.title = 'Close';
   x.onclick = () => { closePane(p); sync(); };
-  head.append(el('span', 'ti', `${s.title}  ·  ${s.cwd}`), x);
+  head.append(p.ti, x);
   const grip = el('div', 'grip');   // drag a column's left edge to trade width with the column before it
   grip.onpointerdown = ev => {
     const a = p.node.previousElementSibling, b = p.node, wa = a.offsetWidth, wb = b.offsetWidth, x = ev.clientX;
@@ -183,6 +197,7 @@ function openPane(s) {
     };
   };
   grip.onpointerup = () => grip.onpointermove = null;
+  p.node.style.setProperty('--h', hue(s.project));
   p.node.append(grip, head, p.box);
   $('panes').append(p.node);
   panes.push(p);
