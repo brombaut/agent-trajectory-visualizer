@@ -37,6 +37,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
     assert server.claude_info(f)["title"] == "hello" and server.claude_info(f)["cwd"] == "/x"
 
+    # /clear leaves a new file holding only the command; it is not listed until a prompt arrives
+    stub = f.with_name("stub.jsonl")
+    stub.write_text(json.dumps({"type": "user", "cwd": "/x", "message": {"content": "<command-name>/clear</command-name>"}}) + "\n")
+    assert server.claude_info(stub)["empty"] and not server.claude_info(f)["empty"]
+    assert "0/proj/stub" not in [s["id"] for s in server.claude_sessions()]
+
     # a message queued while the agent works is only an attachment; show it as a user turn,
     # but not the task notifications that share the attachment type
     queued = lambda **a: server.claude_events({"type": "attachment", "attachment": {"type": "queued_command", **a}}, 0)[0]

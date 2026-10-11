@@ -87,7 +87,7 @@ def claude_info(p, i=0):
     key = (st.st_mtime, st.st_size)
     if p in _info_cache and _info_cache[p][0] == key:
         return _info_cache[p][1]
-    title = prompt = cwd = None
+    title = prompt = cwd = replied = None
     with open(p, errors="replace") as f:
         for line in f:
             # Parse everything until we have cwd + first prompt, then only title candidates.
@@ -100,6 +100,7 @@ def claude_info(p, i=0):
             if d.get("type") == "ai-title":
                 title = d.get("aiTitle")
             cwd = cwd or d.get("cwd")
+            replied = replied or d.get("type") == "assistant"
             if not prompt and d.get("type") == "user" and not d.get("isMeta"):
                 p_ = " ".join(text_of((d.get("message") or {}).get("content")).split())
                 if not p_.startswith(("<", "[")):  # slash-command wrappers, tool results, interrupts
@@ -115,6 +116,8 @@ def claude_info(p, i=0):
     info = {
         "source": "claude", "id": f"{i}/{rel}", "parent": parent, "cwd": cwd or "",
         "title": title or (prompt or "(untitled)")[:120], "updated": int(st.st_mtime * 1000),
+        # /clear starts a new file holding only the command itself; it stays a stub until a prompt arrives
+        "empty": not (title or prompt or replied),
     }
     _info_cache[p] = (key, info)
     return info
@@ -144,7 +147,9 @@ def claude_sessions():
         for p in [*root.glob("*/*.jsonl"), *root.glob("*/*/subagents/*.jsonl")]:
             try:
                 # idle: turn finished; waiting: blocked on a permission prompt or a question
-                out.append({**claude_info(p, i), "waiting": live.get(p.stem) in ("idle", "waiting")})
+                info = claude_info(p, i)
+                if not info["empty"]:
+                    out.append({**info, "waiting": live.get(p.stem) in ("idle", "waiting")})
             except (OSError, ValueError) as e:
                 print(f"skip {p}: {e}", file=sys.stderr)
     return out
