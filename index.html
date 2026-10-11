@@ -2,63 +2,65 @@
 <meta charset="utf-8">
 <title>Agent trajectories</title>
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; scrollbar-color: #3a3f48 transparent; }
-  body { margin: 0; height: 100vh; display: flex; background: #14161a; color: #d6d9de;
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; scrollbar-color: #aaa transparent; }
+  body { margin: 0; height: 100vh; display: flex; background: #d6d6d6; color: #111;
          font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  aside { width: 340px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #2a2e35; }
-  #proj, #q { margin: 8px 8px 0; padding: 6px 8px; background: #1c1f25; color: inherit; border: 1px solid #2a2e35; border-radius: 4px; font: inherit; }
+  aside { width: 340px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #b4b4b4; }
+  #proj, #q { margin: 8px 8px 0; padding: 6px 8px; background: #e4e4e4; color: inherit; border: 1px solid #b4b4b4; border-radius: 4px; font: inherit; }
   #proj summary { display: block; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #projs { max-height: 50vh; overflow-y: auto; margin-top: 6px; }
   #projs label { display: flex; gap: 6px; align-items: center; cursor: pointer; white-space: nowrap; }
-  .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: hsl(var(--h) 60% 55%); }
+  /* --h is the project hue, set on swatches, session rows and panes; --p is that project's plastics colour */
+  .sw, .s, .pane { --p: oklch(.85 .3 var(--h)); }
+  .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--p); }
   #list { overflow-y: auto; flex: 1; margin-top: 8px; }
-  /* --h is the project hue, set on session rows and on panes */
-  .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid hsl(var(--h) 60% 55% / .5); background: hsl(var(--h) 60% 55% / .08); }
-  .s:hover { background: hsl(var(--h) 60% 55% / .16); }
-  .s.active { background: hsl(var(--h) 60% 55% / .3); border-left-color: #6ea8fe; }
+  .s { padding: 6px 10px; cursor: pointer; border-left: 6px solid var(--p); border-bottom: 1px solid #c6c6c6; }
+  .s:hover { background: #c8c8c8; }
+  .s.active, .s.active * { background: var(--p); color: #000; }
   .s .ti, .ph .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .s .sub { color: #7d8590; font-size: 11px; display: flex; gap: 6px; }
+  .s .sub { color: #595959; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .src { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #2a2e35; }
-  .src.claude { color: #e8a87c; } .src.opencode { color: #7cc4e8; }
-  .live { color: #5fd38d; }
+  .src { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #c6c6c6; }
+  .live { color: #0b8a00; }
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  header { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-bottom: 1px solid #2a2e35; }
-  button { font: inherit; color: inherit; background: #232831; border: 1px solid #2a2e35; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  header { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-bottom: 1px solid #b4b4b4; }
+  button { font: inherit; color: inherit; background: #e4e4e4; border: 1px solid #b4b4b4; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
   #panes { flex: 1; min-height: 0; display: flex; }
-  #panes:empty::before { content: 'Select a session'; padding: 12px; color: #7d8590; }
+  #panes:empty::before { content: 'Select a session'; padding: 12px; color: #595959; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
   .grip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 1; cursor: col-resize; }
-  .grip:hover { background: #6ea8fe55; }
+  .grip:hover { background: #0003; }
   .pane:first-child .grip { display: none; }
   body > .grip { position: relative; left: 0; flex: none; margin: 0 -3px; }
-  .pane + .pane { border-left: 1px solid #2a2e35; }
-  .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #2a2e35;
-        background: hsl(var(--h) 60% 55% / .3); }
+  .pane + .pane { border-left: 1px solid #b4b4b4; }
+  .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #b4b4b4;
+        background: var(--p); color: #000; font-weight: 600; }
+  .ph button { background: none; border-color: #0005; }
   .ph .ti { flex: 1; }
-  .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; background: hsl(var(--h) 60% 55% / .06); }
-  .ev { border-left: 3px solid #444; margin: 2px 0; background: #191c21; border-radius: 0 4px 4px 0; }
-  .ev.user { border-color: #6ea8fe; margin-top: 14px; background: #1a2130; }
-  .ev.assistant { border-color: #5fd38d; }
-  .ev.thinking { border-color: #b08cf0; opacity: .8; }
-  .ev.tool { border-color: #e0b354; }
-  .ev.err { border-color: #f0706a; }
+  .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+  /* --k is the turn type colour: the same in every project */
+  .ev { --k: #c6c6c6; border-left: 4px solid var(--k); margin: 2px 0; background: #e4e4e4; border-radius: 0 4px 4px 0; }
+  .ev.user { --k: #e6ff00; margin-top: 14px; background: #f0f7a6; }
+  .ev.assistant { --k: #4dff4d; }
+  .ev.thinking { --k: #ff6bd6; opacity: .8; }
+  .ev.tool { --k: #ff9a1f; }
+  .ev.err { --k: #ff3b3b; }
   .ev.meta { display: none; opacity: .6; }
   .show-meta .ev.meta { display: block; }
   summary { display: flex; gap: 10px; padding: 4px 8px; cursor: pointer; list-style: none; }
   summary::-webkit-details-marker { display: none; }
-  summary:hover { background: #ffffff0a; }
-  .k { flex: none; width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-  .user .k { color: #6ea8fe; } .assistant .k { color: #5fd38d; } .thinking .k { color: #b08cf0; }
-  .tool .k { color: #e0b354; } .err .k, .err .r { color: #f0706a; }
-  .t, .r { flex: none; color: #7d8590; }
+  summary:hover { background: #0000000a; }
+  .k { flex: none; width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; background: var(--k); padding: 0 6px; border-radius: 2px; }
+  .tool:not(.err) .k { background: none; }   /* most rows are tools: a stripe only, so the other types stand out */
+  .err .r { color: #d4001a; }
+  .t, .r { flex: none; color: #595959; }
   .b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  [open] > summary .b { color: #7d8590; }
+  [open] > summary .b { color: #595959; }
   .body { padding: 4px 10px 10px 128px; cursor: pointer; }
-  h4 { margin: 8px 0 2px; font-size: 11px; color: #7d8590; font-weight: 400; text-transform: uppercase; }
+  h4 { margin: 8px 0 2px; font-size: 11px; color: #595959; font-weight: 400; text-transform: uppercase; }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; cursor: auto; }
-  h4 + pre { background: #101216; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
+  h4 + pre { background: #d8d8d8; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
 </style>
 
 <aside>
@@ -98,9 +100,10 @@ const adding = ev => ev.ctrlKey || ev.metaKey;   // Ctrl/Cmd+click adds a column
 const hue = p => {   // a project's colour: hashed from its path, so it never changes
   let h = 0;
   for (const c of p) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h % 360;
+  return (h % 310 + 300) % 360;   // skips 250-300: blue and purple only come out pastel, not neon
 };
 const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
+const paneTitle = s => `${s.project.split('/').pop() || '(unknown)'}  ·  ${title(s)}`;   // project first, then the session
 
 const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el('span', '', ago(ms));
 
@@ -172,14 +175,15 @@ async function loadSessions() {
   let gone = false;
   for (const p of [...panes]) {   // a session that vanished drops its column; the rest carry on
     const s = sessions.find(s => key(s) === key(p.s));
-    if (s) p.ti.textContent = `${title(p.s = s)}  ·  ${s.cwd}`; else { closePane(p); gone = true; }
+    if (s) p.ti.textContent = paneTitle(p.s = s); else { closePane(p); gone = true; }
   }
   gone ? sync() : renderList();
 }
 
 function openPane(s) {
   const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
-              ti: el('span', 'ti', `${title(s)}  ·  ${s.cwd}`) };
+              ti: el('span', 'ti', paneTitle(s)) };
+  p.ti.title = s.cwd;
   const head = el('div', 'ph'), x = el('button', '', '×');
   x.title = 'Close';
   x.onclick = () => { closePane(p); sync(); };
