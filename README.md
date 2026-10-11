@@ -38,7 +38,10 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 - **Sessions** next to it, newest first, with subagent sessions nested under their parent.
 - **Trajectory** on the right: one line per user message, assistant reply and tool call.
   Click a line for the full text, tool inputs, output and token details, or hit **Expand all**.
-- **Live**: the open session is tailed every 1.5s and follows the bottom unless you scroll up.
+- **Side by side**: Ctrl+click (Cmd+click on macOS) a session to open it in another column, or again to
+  close it. Ctrl+click a project to add its latest session. Drag the divider between two columns to resize
+  them. The URL keeps the set of open sessions, so a reload restores it.
+- **Live**: every open session is tailed every 1.5s and follows the bottom unless you scroll that column up.
 - **meta** shows the background records hidden by default: system reminders, hook output, attachments.
 
 ## Where it looks

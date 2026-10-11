@@ -13,17 +13,27 @@
   .s { padding: 6px 10px; cursor: pointer; border-left: 3px solid transparent; }
   .s:hover { background: #1c1f25; }
   .s.active { background: #232831; border-left-color: #6ea8fe; }
-  .s .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s.open { border-left-color: #6ea8fe; }
+  .s .ti, .ph .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .s .sub { color: #7d8590; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #2a2e35; }
   .src.claude { color: #e8a87c; } .src.opencode { color: #7cc4e8; }
   .live { color: #5fd38d; }
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #2a2e35; }
-  #title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-bottom: 1px solid #2a2e35; }
   button { font: inherit; color: inherit; background: #232831; border: 1px solid #2a2e35; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
-  #events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+  #panes { flex: 1; min-height: 0; display: flex; }
+  #panes:empty::before { content: 'Select a session'; padding: 12px; color: #7d8590; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+  .grip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 1; cursor: col-resize; }
+  .grip:hover { background: #6ea8fe55; }
+  .pane:first-child .grip { display: none; }
+  body > .grip { position: relative; left: 0; flex: none; margin: 0 -3px; }
+  .pane + .pane { border-left: 1px solid #2a2e35; }
+  .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #2a2e35; }
+  .ph .ti { flex: 1; }
+  .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
   .ev { border-left: 3px solid #444; margin: 2px 0; background: #191c21; border-radius: 0 4px 4px 0; }
   .ev.user { border-color: #6ea8fe; margin-top: 14px; background: #1a2130; }
   .ev.assistant { border-color: #5fd38d; }
@@ -48,17 +58,18 @@
 </style>
 
 <aside id="projects"></aside>
+<div class="grip"></div>
 <aside>
   <input id="q" placeholder="filter sessions…">
   <div id="list"></div>
 </aside>
+<div class="grip"></div>
 <main>
   <header>
-    <span id="title">Select a session</span>
     <label><input type="checkbox" id="meta"> meta</label>
     <button id="expand">Expand all</button>
   </header>
-  <div id="events"></div>
+  <div id="panes"></div>
 </main>
 
 <script>
@@ -70,14 +81,16 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-let sessions = [], project = null /* cwd; null = all */, cur = null, cursor = 0, gen = 0, expanded = false;
-const byId = new Map();   // event id -> {e, json, node}
+let sessions = [], project = null /* cwd; null = all */, expanded = false;
+const panes = [];   // open sessions, one column each: {s, cursor, byId: event id -> {e, json, node}, node, box}
 
 const ago = ms => {
   const s = (Date.now() - ms) / 1000;
   return s < 60 ? 'now' : s < 3600 ? `${s / 60 | 0}m` : s < 86400 ? `${s / 3600 | 0}h` : `${s / 86400 | 0}d`;
 };
 const key = s => `${s.source}/${s.id}`;
+const pane = s => panes.find(p => key(p.s) === key(s));
+const adding = ev => ev.ctrlKey || ev.metaKey;   // Ctrl/Cmd+click adds a column instead of replacing
 
 const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el('span', '', ago(ms));
 
@@ -91,16 +104,19 @@ function renderProjects() {
   }
   const rows = [...groups.values()].sort((a, b) => b.updated - a.updated);
   rows.unshift({ cwd: null, n: rows.reduce((n, g) => n + g.n, 0), updated: rows[0]?.updated ?? 0 });
+  const open = new Set(panes.map(p => p.s.project));
   $('projects').replaceChildren(...rows.map(g => {
-    const d = el('div', 's' + (g.cwd === project ? ' active' : ''));
+    const d = el('div', 's' + (g.cwd === project ? ' active' : '') + (open.has(g.cwd) ? ' open' : ''));
     const sub = el('div', 'sub');
     sub.append(el('span', 'cwd', `${g.n} session${g.n === 1 ? '' : 's'}`), stamp(g.updated));
     d.append(el('div', 'ti', g.cwd === null ? 'All projects' : g.cwd.split('/').pop() || '(unknown)'), sub);
     d.title = g.cwd ?? '';
-    d.onclick = () => {
+    d.onclick = ev => {
       project = g.cwd;
-      const latest = sessions.find(s => s.project === project);   // list is newest-first
-      latest ? select(latest) : renderList();                     // "All projects" keeps the current session
+      const latest = sessions.find(s => s.project === project);   // list is newest-first; none for "All projects"
+      if (latest && adding(ev)) pane(latest) || openPane(latest);
+      else if (latest && panes.length < 2) return select(latest);
+      sync();   // with several columns open a plain click only filters the list
     };
     return d;
   }));
@@ -113,14 +129,14 @@ function renderList() {
     .filter(s => project === null || s.project === project)
     .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
     .map(s => {
-      const d = el('div', 's' + (cur && key(cur) === key(s) ? ' active' : ''));
+      const d = el('div', 's' + (pane(s) ? ' active' : ''));
       d.style.paddingLeft = 10 + s.depth * 16 + 'px';
       const sub = el('div', 'sub');
       sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
                  stamp(s.updated));
       d.append(el('div', 'ti', (s.depth ? '↳ ' : '') + s.title), sub);
       d.title = s.title;
-      d.onclick = () => select(s);
+      d.onclick = ev => adding(ev) ? toggle(s) : select(s);
       return d;
     }));
 }
@@ -130,49 +146,96 @@ async function loadSessions() {
   // Subagents follow their parent's project (the list arrives parent-first).
   let root;
   for (const s of sessions) s.project = (s.depth ? root : root = s).cwd;
-  if (!cur && location.hash) {
-    const s = sessions.find(s => key(s) === decodeURIComponent(location.hash.slice(1)));
-    if (s) { project = s.project; return select(s); }
+  if (!panes.length && location.hash) {
+    const h = location.hash.slice(1), find = k => sessions.find(s => key(s) === decodeURIComponent(k));
+    const whole = find(h);   // old single-session hashes were not encoded, so may contain a comma
+    const found = whole ? [whole] : h.split(',').map(find).filter(Boolean);
+    if (found.length) {
+      project = found.every(s => s.project === found[0].project) ? found[0].project : null;
+      found.forEach(openPane);
+      return sync();
+    }
   }
-  renderList();
+  let gone = false;
+  for (const p of [...panes]) {   // a session that vanished drops its column; the rest carry on
+    const s = sessions.find(s => key(s) === key(p.s));
+    if (s) p.s = s; else { closePane(p); gone = true; }
+  }
+  gone ? sync() : renderList();
+}
+
+function openPane(s) {
+  const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events') };
+  const head = el('div', 'ph'), x = el('button', '', '×');
+  x.title = 'Close';
+  x.onclick = () => { closePane(p); sync(); };
+  head.append(el('span', 'ti', `${s.title}  ·  ${s.cwd}`), x);
+  const grip = el('div', 'grip');   // drag a column's left edge to trade width with the column before it
+  grip.onpointerdown = ev => {
+    const a = p.node.previousElementSibling, b = p.node, wa = a.offsetWidth, wb = b.offsetWidth, x = ev.clientX;
+    const grow = +getComputedStyle(a).flexGrow + +getComputedStyle(b).flexGrow;   // widths follow flex-grow
+    grip.setPointerCapture(ev.pointerId);
+    ev.preventDefault();   // no text selection while dragging
+    grip.onpointermove = ev => {
+      const d = Math.max(80 - wa, Math.min(wb - 80, ev.clientX - x));   // keep both at least 80px wide
+      a.style.flexGrow = grow * (wa + d) / (wa + wb);
+      b.style.flexGrow = grow * (wb - d) / (wa + wb);
+    };
+  };
+  grip.onpointerup = () => grip.onpointermove = null;
+  p.node.append(grip, head, p.box);
+  $('panes').append(p.node);
+  panes.push(p);
+  poll(p).catch(console.error);
+}
+
+function closePane(p) {
+  p.node.remove();
+  panes.splice(panes.indexOf(p), 1);
 }
 
 function select(s) {
-  cur = s; cursor = 0; gen++;
-  byId.clear();
-  $('events').replaceChildren();
-  $('title').textContent = `${s.title}  ·  ${s.cwd}`;
-  location.hash = key(s);
-  renderList();
-  poll();
+  [...panes].forEach(closePane);
+  openPane(s);
+  sync();
 }
 
-async function poll() {
-  if (!cur) return;
-  const g = gen, first = cursor === 0;
-  const r = await fetch(`/api/events?source=${cur.source}&id=${encodeURIComponent(cur.id)}&cursor=${cursor}`);
+function toggle(s) {
+  const p = pane(s);
+  p ? closePane(p) : openPane(s);
+  sync();
+}
+
+function sync() {
+  location.hash = panes.map(p => encodeURIComponent(key(p.s))).join(',');
+  renderList();
+}
+
+async function poll(p) {
+  const first = p.cursor === 0;
+  const r = await fetch(`/api/events?source=${p.s.source}&id=${encodeURIComponent(p.s.id)}&cursor=${p.cursor}`);
   if (!r.ok) throw new Error(await r.text());
   const data = await r.json();
-  if (g !== gen) return;   // user switched sessions mid-request
-  cursor = data.cursor;
-  const box = $('events');
+  if (!panes.includes(p)) return;   // closed mid-request
+  p.cursor = data.cursor;
+  const box = p.box;
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  data.events.forEach(upsert);
-  if (first || atBottom) box.scrollTop = box.scrollHeight;   // follow live output unless scrolled up
+  data.events.forEach(e => upsert(p, e));
+  if (first || atBottom) box.scrollTop = box.scrollHeight;   // follow live output unless this column is scrolled up
 }
 
-function upsert(e) {
+function upsert(p, e) {
   if (e.kind === 'result') {   // Claude logs tool results as separate records; fold into the call
-    const call = byId.get(e.tool);
+    const call = p.byId.get(e.tool);
     e = call ? { ...call.e, output: e.output, error: e.error }
              : { ...e, kind: 'tool', name: 'tool result' };
   }
-  const old = byId.get(e.id), json = JSON.stringify(e);
+  const old = p.byId.get(e.id), json = JSON.stringify(e);
   if (old && old.json === json) return;
   const node = row(e);
   if (old) { node.open = old.node.open; old.node.replaceWith(node); }
-  else $('events').append(node);
-  byId.set(e.id, { e, json, node });
+  else p.box.append(node);
+  p.byId.set(e.id, { e, json, node });
 }
 
 function brief(e) {
@@ -228,11 +291,20 @@ function body(e) {
 }
 
 $('q').oninput = renderList;
-$('meta').onchange = e => $('events').classList.toggle('show-meta', e.target.checked);
+for (const grip of document.querySelectorAll('body > .grip')) {   // drag to set the width of the sidebar before it
+  grip.onpointerdown = ev => {
+    const a = grip.previousElementSibling, w = a.offsetWidth, x = ev.clientX;
+    grip.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+    grip.onpointermove = ev => a.style.width = Math.max(80, w + ev.clientX - x) + 'px';
+  };
+  grip.onpointerup = () => grip.onpointermove = null;
+}
+$('meta').onchange = e => $('panes').classList.toggle('show-meta', e.target.checked);
 $('expand').onclick = () => {
   expanded = !expanded;
   $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';
-  for (const { node } of byId.values()) node.open = expanded;
+  for (const p of panes) for (const { node } of p.byId.values()) node.open = expanded;
 };
 
 async function loop(fn, ms) {
@@ -240,5 +312,5 @@ async function loop(fn, ms) {
   setTimeout(loop, ms, fn, ms);
 }
 loop(loadSessions, 5000);
-loop(poll, 1500);
+loop(() => Promise.all(panes.map(p => poll(p).catch(console.error))), 1500);
 </script>

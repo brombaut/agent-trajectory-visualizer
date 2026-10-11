@@ -32,6 +32,7 @@ server, so there that means restarting the app. Changes to `electron/main.js` al
 
 ## Ground rules
 
+- Work directly on the `main` branch. Only create or switch to another branch when explicitly asked to.
 - Python standard library only, and no frontend dependencies or build step. Don't add either without asking.
   The one exception is `electron` as a devDependency for the desktop shell; nothing else goes in `package.json`.
 - The Electron window keeps `contextIsolation`, no `nodeIntegration`, no preload, the Chromium sandbox,
@@ -53,6 +54,8 @@ Every record becomes one or more events:
 
 The browser polls `/api/events?source=&id=&cursor=` and upserts events by `id`, so re-sending an
 event is harmless and an updated event replaces its row in place.
+Each open session is a pane (a column) with its own cursor and event map, polled separately; the URL
+hash lists the open session keys, each URI-encoded and joined with `,`.
 
 - **Claude Code** (default root `~/.claude/projects`; `<project>/<session>.jsonl`, subagents in `<session>/subagents/`):
   append-only, so the cursor is a byte offset and a half-written last line is left for the next poll.
