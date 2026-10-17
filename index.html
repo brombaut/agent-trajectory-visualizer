@@ -11,7 +11,8 @@
   #proj summary { display: block; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #projs { max-height: 50vh; overflow-y: auto; margin-top: 6px; }
   #projs label { display: flex; gap: 6px; align-items: center; cursor: pointer; white-space: nowrap; }
-  /* --h is the project hue, set on swatches, session rows and panes; --p is that project's plastics colour */
+  /* --h is the project hue, set on swatches, session rows and panes; --p is that project's plastics colour.
+     A project with a colour in the config file gets --p set directly instead. */
   .sw, .s, .pane { --p: oklch(.85 .3 var(--h)); }
   .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--p); }
   #list { overflow-y: auto; flex: 1; margin-top: 8px; }
@@ -102,6 +103,7 @@ const hue = p => {   // a project's colour: hashed from its path, so it never ch
   for (const c of p) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return (h % 310 + 300) % 360;   // skips 250-300: blue and purple only come out pastel, not neon
 };
+const paint = (node, project, color) => node.style.setProperty(...color ? ['--p', color] : ['--h', hue(project)]);
 const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
 const paneTitle = s => `${s.project.split('/').pop() || '(unknown)'}  ·  ${title(s)}`;   // project first, then the session
 
@@ -110,7 +112,7 @@ const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el
 function renderProjects() {
   const groups = new Map();
   for (const s of sessions) {
-    const g = groups.get(s.project) ?? { cwd: s.project, n: 0, updated: 0 };
+    const g = groups.get(s.project) ?? { cwd: s.project, color: s.color, n: 0, updated: 0 };
     g.n += !s.depth;
     g.updated = Math.max(g.updated, s.updated);
     groups.set(s.project, g);
@@ -121,14 +123,14 @@ function renderProjects() {
   $('proj').firstElementChild.textContent = '▾ ' + (projects.size
     ? rows.filter(g => projects.has(g.cwd)).map(g => name(g.cwd)).join(', ')
     : `All projects (${rows.reduce((n, g) => n + g.n, 0)})`);
-  const box = $('projs'), sig = rows.map(g => g.cwd + g.n).join();
+  const box = $('projs'), sig = rows.map(g => g.cwd + g.n + g.color).join();
   if (box.dataset.sig !== sig) {   // rebuilt only on change, to keep its scroll position and focus
     box.dataset.sig = sig;
     box.replaceChildren(...rows.map(g => {
       const l = el('label'), c = el('input'), sw = el('span', 'sw');
       c.type = 'checkbox';
       c.onchange = () => { projects[c.checked ? 'add' : 'delete'](g.cwd); renderList(); };
-      sw.style.setProperty('--h', hue(g.cwd));
+      paint(sw, g.cwd, g.color);
       l.append(c, sw, `${name(g.cwd)} (${g.n})`);
       l.title = g.cwd;
       return l;
@@ -145,7 +147,7 @@ function renderList() {
     .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
     .map(s => {
       const d = el('div', 's' + (pane(s) ? ' active' : ''));
-      d.style.setProperty('--h', hue(s.project));
+      paint(d, s.project, s.color);
       d.style.paddingLeft = 10 + s.depth * 16 + 'px';
       const sub = el('div', 'sub');
       sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
@@ -159,9 +161,9 @@ function renderList() {
 
 async function loadSessions() {
   sessions = await (await fetch('/api/sessions')).json();
-  // Subagents follow their parent's project (the list arrives parent-first).
+  // Subagents follow their parent's project and its colour (the list arrives parent-first).
   let root;
-  for (const s of sessions) s.project = (s.depth ? root : root = s).cwd;
+  for (const s of sessions) ({ cwd: s.project, color: s.color } = s.depth ? root : root = s);
   if (!panes.length && location.hash) {
     const h = location.hash.slice(1), find = k => sessions.find(s => key(s) === decodeURIComponent(k));
     const whole = find(h);   // old single-session hashes were not encoded, so may contain a comma
@@ -201,7 +203,7 @@ function openPane(s) {
     };
   };
   grip.onpointerup = () => grip.onpointermove = null;
-  p.node.style.setProperty('--h', hue(s.project));
+  paint(p.node, s.project, s.color);
   p.node.append(grip, head, p.box);
   $('panes').append(p.node);
   panes.push(p);

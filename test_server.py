@@ -104,15 +104,16 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ["XDG_CONFIG_HOME"] = str(tmp / "xdg")
     assert server.load_config() == (None, {
         "claude": [Path.home() / ".claude/projects"],
-        "opencode": [Path.home() / ".local/share/opencode/opencode.db"]})
+        "opencode": [Path.home() / ".local/share/opencode/opencode.db"]}, {})
 
     # overrides, with ~ and $VAR expanded; a missing path is skipped; an empty list turns a scaffold off
     cfg = tmp / "xdg/atv/config.json"
     cfg.parent.mkdir(parents=True)
     os.environ["ATV_TEST_ROOT"] = str(tmp)
     cfg.write_text(json.dumps({"port": 9, "scaffolds": {
-        "claude": {"paths": ["$ATV_TEST_ROOT/r0", "$ATV_TEST_ROOT/nope", "~"]}, "opencode": {"paths": []}}}))
-    want = (9, {"claude": [r0, Path.home()], "opencode": []})
+        "claude": {"paths": ["$ATV_TEST_ROOT/r0", "$ATV_TEST_ROOT/nope", "~"]}, "opencode": {"paths": []}},
+        "projects": {"$ATV_TEST_ROOT/w/": {"color": "#0ff"}, "~/x": {}}}))
+    want = (9, {"claude": [r0, Path.home()], "opencode": []}, {str(tmp / "w"): "#0ff"})
     assert server.load_config() == want                      # found via XDG_CONFIG_HOME
     os.environ["XDG_CONFIG_HOME"] = str(tmp / "elsewhere")
     assert server.load_config(str(cfg)) == want              # --config
@@ -121,12 +122,19 @@ with tempfile.TemporaryDirectory() as tmp:
     server.OPENCODE = want[1]["opencode"]
     assert server.opencode_sessions() == []
 
+    # a configured project colour reaches the session list; other projects get none
+    server.COLORS = {"/w": "#0ff"}
+    server.claude_sessions = lambda: [{"id": "a", "parent": None, "updated": 1, "cwd": "/w/"},
+                                      {"id": "b", "parent": None, "updated": 0, "cwd": "/w/sub"}]
+    assert [s["color"] for s in server.sessions()] == ["#0ff", None]
+
     # a partial file keeps the other defaults
     cfg.write_text(json.dumps({"scaffolds": {"opencode": {"paths": [str(dbs[0])]}}}))
-    assert server.load_config() == (None, {"claude": [Path.home() / ".claude/projects"], "opencode": [dbs[0]]})
+    assert server.load_config() == (None, {"claude": [Path.home() / ".claude/projects"], "opencode": [dbs[0]]}, {})
 
     # startup errors name the file
-    for text in ["{nope", json.dumps({"scaffolds": {"cursor": {"paths": []}}}), None]:
+    for text in ["{nope", json.dumps({"scaffolds": {"cursor": {"paths": []}}}),
+                 json.dumps({"projects": {"/w": {"color": 3}}}), None]:
         if text is None:
             cfg.unlink()  # an explicitly named file has to exist
         else:

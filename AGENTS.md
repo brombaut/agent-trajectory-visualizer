@@ -74,6 +74,8 @@ hash lists the open session keys, each URI-encoded and joined with `,`.
   `electron/main.js` parses the port from it, so keep the wording and the flush.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
 - A project is a session's working directory; subagents inherit their parent's project. Grouping is done in the browser.
+- **Project colours**: hashed from the project path in the browser (`hue`), unless the config file's `projects`
+  gives that directory a `color`; `sessions()` then sends it as `color` and the browser uses it as is (`paint`).
 - **Waiting for the human** (`waiting` on a session, shown as a bell): for Claude Code it comes from the
   `<pid>.json` status files in the `sessions` dir beside each projects root (`claude_live`), counting `idle`
   and `waiting` for processes still running; the transcript can't tell idle from closed. For opencode it is a

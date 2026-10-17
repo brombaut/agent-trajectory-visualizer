@@ -20,16 +20,17 @@ from urllib.parse import parse_qs, urlparse
 DEFAULTS = {"claude": ["~/.claude/projects"], "opencode": ["~/.local/share/opencode/opencode.db"]}
 CLAUDE = [Path(p).expanduser() for p in DEFAULTS["claude"]]      # roots; session ids are "<root index>/<rest>"
 OPENCODE = [Path(p).expanduser() for p in DEFAULTS["opencode"]]
+COLORS = {}  # project directory -> CSS colour from the config; other projects get a hashed one in the browser
 HERE = Path(__file__).parent
 
 
 def load_config(path=None):
-    """-> (port or None, {scaffold: [Path, ...]}). A problem with the file exits, naming it."""
+    """-> (port or None, {scaffold: [Path, ...]}, {project dir: colour}). A problem with the file exits, naming it."""
     explicit = path or os.environ.get("ATV_CONFIG")
     f = Path(explicit or Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config") / "atv/config.json").expanduser()
-    port, roots = None, {k: [Path(p).expanduser() for p in v] for k, v in DEFAULTS.items()}
+    port, roots, colors = None, {k: [Path(p).expanduser() for p in v] for k, v in DEFAULTS.items()}, {}
     if not explicit and not f.exists():
-        return port, roots
+        return port, roots, colors
     try:
         cfg = json.loads(f.read_text())
         port = cfg.get("port")
@@ -50,9 +51,15 @@ def load_config(path=None):
                     roots[name].append(p)
                 else:
                     print(f"warning: {f}: {name} path {p} does not exist, skipping", file=sys.stderr)
+        for raw, pr in cfg.get("projects", {}).items():
+            if "color" not in pr:
+                continue
+            if not isinstance(pr["color"], str):
+                raise ValueError(f"projects.{raw}.color must be a string")
+            colors[str(Path(os.path.expandvars(raw)).expanduser())] = pr["color"]  # Path drops a trailing slash
     except (OSError, ValueError, TypeError, AttributeError) as e:  # the last two: wrong JSON shape
         raise SystemExit(f"config {f}: {e}")
-    return port, roots
+    return port, roots, colors
 
 
 def split_root(sid, roots):
@@ -318,7 +325,7 @@ def sessions():
     out = []
 
     def add(s, depth):
-        out.append({**s, "depth": depth})
+        out.append({**s, "depth": depth, "color": COLORS.get(s["cwd"].rstrip("/") or "/")})
         for k in sorted(kids.get(s["id"], []), key=lambda k: k["updated"]):
             add(k, depth + 1)
 
@@ -365,7 +372,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, help="port to listen on; 0 picks a free one (default 8765)")
     ap.add_argument("--config", help="config file (default: $ATV_CONFIG, then ~/.config/atv/config.json)")
     args = ap.parse_args()
-    cfg_port, roots = load_config(args.config)
+    cfg_port, roots, COLORS = load_config(args.config)
     CLAUDE, OPENCODE = roots["claude"], roots["opencode"]
     port = next(p for p in (args.port, args.port_arg, cfg_port, 8765) if p is not None)
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
