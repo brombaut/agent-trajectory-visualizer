@@ -105,7 +105,8 @@ const hue = p => {   // a project's colour: hashed from its path, so it never ch
 };
 const paint = (node, project, color) => node.style.setProperty(...color ? ['--p', color] : ['--h', hue(project)]);
 const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
-const paneTitle = s => `${s.project.split('/').pop() || '(unknown)'}  ·  ${title(s)}`;   // project first, then the session
+const name = cwd => cwd.split('/').pop() || '(unknown)';   // a project's display name: its last directory
+const paneTitle = s => `${name(s.project)}  ·  ${title(s)}`;   // project first, then the session
 
 const stamp = ms => Date.now() - ms < 60e3 ? el('span', 'live', '● live') : el('span', '', ago(ms));
 
@@ -119,7 +120,6 @@ function renderProjects() {
   }
   const rows = [...groups.values()].sort((a, b) => b.updated - a.updated);
   for (const p of projects) if (!groups.has(p)) projects.delete(p);   // no sessions left
-  const name = cwd => cwd.split('/').pop() || '(unknown)';
   $('proj').firstElementChild.textContent = '▾ ' + (projects.size
     ? rows.filter(g => projects.has(g.cwd)).map(g => name(g.cwd)).join(', ')
     : `All projects (${rows.reduce((n, g) => n + g.n, 0)})`);
@@ -150,8 +150,9 @@ function renderList() {
       paint(d, s.project, s.color);
       d.style.paddingLeft = 10 + s.depth * 16 + 'px';
       const sub = el('div', 'sub');
-      sub.append(el('span', 'src ' + s.source, s.source), el('span', 'cwd', s.cwd.split('/').slice(-2).join('/')),
-                 stamp(s.updated));
+      const cwd = el('span', 'cwd', name(s.project));   // the project, so a subagent in a subdirectory still shows it
+      cwd.title = s.cwd;
+      sub.append(el('span', 'src ' + s.source, s.source), cwd, stamp(s.updated));
       d.append(el('div', 'ti', title(s)), sub);
       d.title = s.title;
       d.onclick = ev => adding(ev) ? toggle(s) : select(s);
