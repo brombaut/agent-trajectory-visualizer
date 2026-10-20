@@ -111,12 +111,63 @@ with tempfile.TemporaryDirectory() as tmp:
         except ValueError:
             pass
 
+    # codex: rollout files under <root>/YYYY/MM/DD/, titles in session_index.jsonl beside the root
+    cx = tmp / "codex/sessions"
+    server.CODEX = [cx]
+    (cx / "2026/10/20").mkdir(parents=True)
+    cf = cx / "2026/10/20/rollout-1-abc.jsonl"
+    item = lambda o, p: {"timestamp": "2026-10-20T22:26:51Z", "ordinal": o, "type": "response_item", "payload": p}
+    msg = lambda o, role, text, kind: item(o, {"type": "message", "id": f"m{o}", "role": role, "content": [
+        {"type": "input_text", "text": text}], "internal_chat_message_metadata_passthrough": {"content_item_kinds": [kind]}})
+    recs = [
+        {"timestamp": "t", "ordinal": 0, "type": "session_meta", "payload": {"id": "abc", "cwd": "/x"}},
+        {"timestamp": "t", "ordinal": 1, "type": "event_msg", "payload": {"type": "task_started"}},
+        msg(2, "developer", "<permissions instructions>", "permissions.instructions"),
+        msg(3, "user", "# AGENTS.md instructions", "agents_md.instructions"),
+        msg(4, "user", "list files", "user.text"),
+        {"timestamp": "t", "ordinal": 5, "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "UserMessage"}}},
+        item(6, {"type": "reasoning", "id": "r1", "summary": [], "encrypted_content": "gAAA"}),
+        item(7, {"type": "custom_tool_call", "id": "c1", "call_id": "call1", "name": "exec",
+                 "input": "const r = await tools.exec_command({cmd:\"printf 'a\\\\n' \\'x\\'\",workdir:\"/x\"});"}),
+        item(8, {"type": "custom_tool_call_output", "id": "o1", "call_id": "call1", "output": [
+            {"type": "input_text", "text": "Script completed"}, {"type": "input_text", "text": "exit_code=0"}]}),
+        item(9, {"type": "custom_tool_call", "id": "c2", "call_id": "call2", "name": "exec",
+                 "input": 'const patch = "*** Begin Patch\\n*** Add File: /x/n.py\\n+hi\\n*** End Patch";'}),
+        item(10, {"type": "message", "id": "m10", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}),
+    ]
+    cf.write_text("".join(json.dumps(r) + "\n" for r in recs) + '{"timestamp": "t", "ordinal": 11, "type": "resp')
+    events, cursor = server.codex_tail("0/2026/10/20/rollout-1-abc", 0)
+    assert [(e["kind"], e.get("name")) for e in events] == [
+        ("meta", "developer"), ("meta", "user"), ("user", "user"), ("tool", "exec"), ("result", None),
+        ("tool", "exec"), ("assistant", None)], events
+    assert events[3]["id"] == events[4]["tool"] == "call1" and events[4]["output"] == "Script completed\nexit_code=0"
+    assert events[3]["input"]["command"] == "printf 'a\\n' 'x'", events[3]["input"]
+    assert events[5]["input"]["path"] == "/x/n.py", events[5]["input"]
+    assert cursor == cf.stat().st_size - len('{"timestamp": "t", "ordinal": 11, "type": "resp')
+    assert server.codex_tail("0/2026/10/20/rollout-1-abc", cursor) == ([], cursor)
+    # titled from the first real prompt, or the index when Codex has named it; a running turn isn't waiting
+    s, = server.codex_sessions()
+    assert (s["title"], s["cwd"], s["waiting"], s["live"]) == ("list files", "/x", False, True), s
+    (cx.parent / "session_index.jsonl").write_text('{"id": "abc", "thread_name": "Named"}\n')
+    with open(cf, "a") as f:
+        f.write('ponse_item"}\n' + json.dumps({"timestamp": "t", "ordinal": 12, "type": "event_msg",
+                                                 "payload": {"type": "task_complete"}}) + "\n")
+    s, = server.codex_sessions()
+    assert (s["title"], s["waiting"]) == ("Named", True), s
+    for bad in ["0/../../secret", "1/2026/10/20/rollout-1-abc", "x/a", ""]:
+        try:
+            server.codex_tail(bad, 0)
+            raise AssertionError(f"bad id allowed: {bad!r}")
+        except ValueError:
+            pass
+
     # config: no file means the built-in defaults
     os.environ.pop("ATV_CONFIG", None)
     os.environ["XDG_CONFIG_HOME"] = str(tmp / "xdg")
     assert server.load_config() == (None, {
         "claude": [Path.home() / ".claude/projects"],
-        "opencode": [Path.home() / ".local/share/opencode/opencode.db"]}, {})
+        "opencode": [Path.home() / ".local/share/opencode/opencode.db"],
+        "codex": [Path.home() / ".codex/sessions"]}, {})
 
     # overrides, with ~ and $VAR expanded; a missing path is skipped; an empty list turns a scaffold off
     cfg = tmp / "xdg/atv/config.json"
@@ -125,7 +176,8 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg.write_text(json.dumps({"port": 9, "scaffolds": {
         "claude": {"paths": ["$ATV_TEST_ROOT/r0", "$ATV_TEST_ROOT/nope", "~"]}, "opencode": {"paths": []}},
         "projects": {"$ATV_TEST_ROOT/w/": {"color": "#0ff"}, "~/x": {}}}))
-    want = (9, {"claude": [r0, Path.home()], "opencode": []}, {str(tmp / "w"): "#0ff"})
+    want = (9, {"claude": [r0, Path.home()], "opencode": [], "codex": [Path.home() / ".codex/sessions"]},
+            {str(tmp / "w"): "#0ff"})
     assert server.load_config() == want                      # found via XDG_CONFIG_HOME
     os.environ["XDG_CONFIG_HOME"] = str(tmp / "elsewhere")
     assert server.load_config(str(cfg)) == want              # --config
@@ -135,14 +187,15 @@ with tempfile.TemporaryDirectory() as tmp:
     assert server.opencode_sessions() == []
 
     # a configured project colour reaches the session list; other projects get none
-    server.COLORS = {"/w": "#0ff"}
+    server.COLORS, server.CODEX = {"/w": "#0ff"}, []
     server.claude_sessions = lambda: [{"id": "a", "parent": None, "updated": 1, "cwd": "/w/"},
                                       {"id": "b", "parent": None, "updated": 0, "cwd": "/w/sub"}]
     assert [s["color"] for s in server.sessions()] == ["#0ff", None]
 
     # a partial file keeps the other defaults
     cfg.write_text(json.dumps({"scaffolds": {"opencode": {"paths": [str(dbs[0])]}}}))
-    assert server.load_config() == (None, {"claude": [Path.home() / ".claude/projects"], "opencode": [dbs[0]]}, {})
+    assert server.load_config() == (None, {"claude": [Path.home() / ".claude/projects"], "opencode": [dbs[0]],
+                                    "codex": [Path.home() / ".codex/sessions"]}, {})
 
     # startup errors name the file
     for text in ["{nope", json.dumps({"scaffolds": {"cursor": {"paths": []}}}),

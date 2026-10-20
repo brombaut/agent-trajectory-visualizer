@@ -1,6 +1,6 @@
 # ATV — Agent Trajectory Visualizer
 
-A local, read-only viewer for Claude Code and opencode sessions, used in a browser tab or as its own
+A local, read-only viewer for Claude Code, opencode and Codex sessions, used in a browser tab or as its own
 desktop window. It is deliberately
 quick and dirty: a personal tool, not a product. Keep it small.
 
@@ -18,7 +18,7 @@ server, so there that means restarting the app. Changes to `electron/main.js` al
 
 ## Layout
 
-- `server.py`: finds sessions, normalizes both formats into one event shape, serves JSON.
+- `server.py`: finds sessions, normalizes all three formats into one event shape, serves JSON.
 - `index.html`: the entire frontend (CSS and JS inline).
 - `test_server.py`: plain-assert checks for the parsers and the tailing logic.
 - `assets/`: README images, and `icon.png` (the app icon, cropped from the banner). The `*-dark.png` files are the
@@ -67,7 +67,13 @@ hash lists the open session keys, each URI-encoded and joined with `,`.
 - **opencode** (default `~/.local/share/opencode/opencode.db`, tables `session_v2` and `session_message`):
   rows are rewritten while a message streams, so the cursor is the max `time_updated` and the query
   uses `>=`; the browser drops unchanged events.
-- **Roots and ids**: each scaffold has a list of roots (`CLAUDE`, `OPENCODE`), set from the config file by
+- **Codex** (default root `~/.codex/sessions`; `YYYY/MM/DD/rollout-<time>-<uuid>.jsonl`): append-only, tailed
+  like Claude Code. Only `response_item` records become events; the `event_msg` records repeat the same messages
+  and commands. Injected context (AGENTS.md, environment, `developer` messages) is `meta`: a `user` message is only
+  human if its `content_item_kinds` include `user.text`. Tool calls are `exec` JS scripts; the `cmd:` strings and
+  patched file paths are pulled out as `command`/`path`. Reasoning is encrypted, so it shows only if a summary is
+  present. Titles come from `session_index.jsonl` beside the root. No subagents seen yet.
+- **Roots and ids**: each scaffold has a list of roots (`CLAUDE`, `OPENCODE`, `CODEX`), set from the config file by
   `load_config` (lookup order and rules are in `CONFIG.md`). Session ids are `<root index>/<rest>`, where the
   index counts only the roots that exist. The browser treats ids as opaque.
 - **Startup line**: after binding, the server prints `listening on http://127.0.0.1:<port>` and flushes.
@@ -79,11 +85,12 @@ hash lists the open session keys, each URI-encoded and joined with `,`.
 - **Waiting for the human** (`waiting` on a session, shown as a bell): for Claude Code it comes from the
   `<pid>.json` status files in the `sessions` dir beside each projects root (`claude_live`), counting `idle`
   and `waiting` for processes still running; the transcript can't tell idle from closed. For opencode it is a
-  top-level session whose last message is `idle`, updated within a day.
+  top-level session whose last message is `idle`, updated within a day; for Codex, one whose last turn event is
+  `task_complete`, updated within a day.
 - **Live** (`live` on a session; the "Open live" button opens these and closes the other panes): for Claude Code,
   a top-level session whose process is still running per `claude_live` (after `/clear` the status file names the
   new session, so the old one drops out) and is `busy` or `waiting`, or changed status (`statusUpdatedAt`) within
-  `LIVE_MS` (30 min). Not the transcript mtime, which background writes can bump. For opencode, a top-level session
+  `LIVE_MS` (30 min). Not the transcript mtime, which background writes can bump. For opencode and Codex, a top-level session
   updated within `LIVE_MS`. The button respects the project filter and search box.
 
 ## Checking changes

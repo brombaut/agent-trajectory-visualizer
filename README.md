@@ -4,8 +4,8 @@
 
 A quick-and-dirty view for going off-road through your coding-agent sessions: every
 project, every session, every turn, live as it happens. Open it in a browser tab or run it as its
-own desktop window. It reads [Claude Code](https://claude.com/claude-code)
-and [opencode](https://opencode.ai) sessions straight from where those tools already store them.
+own desktop window. It reads [Claude Code](https://claude.com/claude-code),
+[opencode](https://opencode.ai) and [Codex](https://github.com/openai/codex) sessions straight from where those tools already store them.
 
 ## Ride
 
@@ -51,6 +51,7 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 | ----------- | --------------------------------------- |
 | Claude Code | `~/.claude/projects/**/*.jsonl`          |
 | opencode    | `~/.local/share/opencode/opencode.db`    |
+| Codex       | `~/.codex/sessions/**/rollout-*.jsonl`   |
 
 Everything is read-only, and the server only listens on localhost, since sessions tend to contain secrets.
 
@@ -61,7 +62,7 @@ see [CONFIG.md](CONFIG.md).
 
 ## Under the hood
 
-- `server.py` turns both formats into one event shape and serves it as JSON.
+- `server.py` turns every format into one event shape and serves it as JSON.
 - `index.html` is the whole frontend, no dependencies.
 - `electron/main.js` is the desktop shell: it starts `server.py` and points a window at it.
 - `test_server.py` is a small self-check: `python3 test_server.py`.

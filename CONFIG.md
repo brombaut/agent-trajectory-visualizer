@@ -13,7 +13,8 @@ a JSON file. The first of these wins:
   "port": 8765,
   "scaffolds": {
     "claude": { "paths": ["~/.claude/projects"] },
-    "opencode": { "paths": ["~/.local/share/opencode/opencode.db"] }
+    "opencode": { "paths": ["~/.local/share/opencode/opencode.db"] },
+    "codex": { "paths": ["~/.codex/sessions"] }
   },
   "projects": {
     "~/work/some-project": { "color": "#00e5ff" }

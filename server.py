@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent trajectory visualizer for Claude Code + opencode sessions.
+"""Agent trajectory visualizer for Claude Code, opencode and Codex sessions.
 
 Run:  python3 server.py [port] [--port N] [--config FILE]   ->  http://127.0.0.1:8765
 
@@ -9,6 +9,7 @@ Every event sent to the browser is normalized to:
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -17,9 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-DEFAULTS = {"claude": ["~/.claude/projects"], "opencode": ["~/.local/share/opencode/opencode.db"]}
+DEFAULTS = {"claude": ["~/.claude/projects"], "opencode": ["~/.local/share/opencode/opencode.db"],
+            "codex": ["~/.codex/sessions"]}
 CLAUDE = [Path(p).expanduser() for p in DEFAULTS["claude"]]      # roots; session ids are "<root index>/<rest>"
 OPENCODE = [Path(p).expanduser() for p in DEFAULTS["opencode"]]
+CODEX = [Path(p).expanduser() for p in DEFAULTS["codex"]]
 COLORS = {}  # project directory -> CSS colour from the config; other projects get a hashed one in the browser
 HERE = Path(__file__).parent
 LIVE_MS = 30 * 60e3  # a session left idle longer than this isn't live, even if its process is still open
@@ -219,7 +222,11 @@ def claude_events(d, n):
 
 
 def claude_tail(sid, offset):
-    root, rel = split_root(sid, CLAUDE)
+    return jsonl_tail(CLAUDE, claude_events, sid, offset)
+
+
+def jsonl_tail(roots, parse, sid, offset):
+    root, rel = split_root(sid, roots)
     p = (root / (rel + ".jsonl")).resolve()
     if not p.is_relative_to(root.resolve()):  # must stay inside the root the id names
         raise ValueError("bad session id")
@@ -230,7 +237,7 @@ def claude_tail(sid, offset):
             if not line.endswith(b"\n"):
                 break  # half-written line; pick it up on the next poll
             try:
-                events += claude_events(json.loads(line), offset)
+                events += parse(json.loads(line), offset)
             except Exception as e:  # one odd record shouldn't blank the whole session
                 events.append({"id": f"bad:{offset}", "kind": "meta", "ts": None,
                                "name": "unparsed", "text": f"{e!r}\n{line[:2000]!r}"})
@@ -318,11 +325,114 @@ def opencode_tail(sid, since):
     return events, since
 
 
+# ---------- Codex: one append-only JSONL "rollout" file per session, under YYYY/MM/DD/ ----------
+
+def codex_info(p, i=0):
+    """i is the index of the root in CODEX that p was found under."""
+    st = p.stat()
+    key = (st.st_mtime, st.st_size)
+    if p in _info_cache and _info_cache[p][0] == key:
+        return _info_cache[p][1]
+    meta, prompt, done = {}, None, False
+    with open(p, errors="replace") as f:
+        for line in f:
+            head = line[:200]  # each record starts {"timestamp", "ordinal", "type", "payload": {"type"
+            if '"task_started"' in head or '"task_complete"' in head:
+                done = '"task_complete"' in head  # the last one says whether a turn is still running
+            elif not meta and '"session_meta"' in head:
+                meta = json.loads(line)["payload"]
+            elif not prompt and '"user.text"' in line and '"response_item"' in head:
+                prompt = " ".join(codex_text(json.loads(line)["payload"]).split())
+    info = {"source": "codex", "id": f"{i}/{p.relative_to(CODEX[i]).with_suffix('')}", "parent": None,
+            "sid": meta.get("id"), "cwd": meta.get("cwd") or "", "title": (prompt or "(untitled)")[:120],
+            "updated": int(st.st_mtime * 1000), "done": done}
+    _info_cache[p] = (key, info)
+    return info
+
+
+def codex_sessions():
+    out, now = [], time.time() * 1000
+    for i, root in enumerate(CODEX):
+        titles = {}  # thread id -> generated title; a later line for the same id wins
+        try:
+            with open(root.parent / "session_index.jsonl", errors="replace") as f:
+                for line in f:
+                    try:
+                        d = json.loads(line)
+                        titles[d["id"]] = d["thread_name"]
+                    except (ValueError, KeyError, TypeError):
+                        pass
+        except OSError:
+            pass
+        for p in root.glob("**/rollout-*.jsonl"):
+            try:
+                info = codex_info(p, i)
+            except (OSError, ValueError, KeyError) as e:
+                print(f"skip {p}: {e}", file=sys.stderr)
+                continue
+            # ponytail: like opencode, nothing here says whether Codex is still running, so a finished
+            # turn under a day old counts as waiting; ~/.codex/thread-writer-locks may hold a process check.
+            out.append({**info, "title": titles.get(info["sid"]) or info["title"],
+                        "waiting": info["done"] and info["updated"] > now - 86400e3,
+                        "live": info["updated"] > now - LIVE_MS})
+    return out
+
+
+def codex_text(m):
+    return "\n".join(c.get("text", "") if "text" in c else f"[{c.get('type')}]" for c in m.get("content") or [])
+
+
+def js_str(s):
+    """Body of a double-quoted JS string literal -> its value; JS allows \\' where JSON doesn't."""
+    try:
+        return json.loads(f'"{s}"'.replace("\\'", "'"))
+    except ValueError:
+        return s
+
+
+def codex_events(d, n):
+    """One rollout record -> normalized events. Only response_item records are used: the event_msg
+    records repeat the same messages and commands, and the rest is settings and token counts."""
+    if d.get("type") != "response_item":
+        return []
+    p, ts = d.get("payload") or {}, d.get("timestamp")
+    t, uid = p.get("type"), p.get("id") or str(n)
+    if t == "message":
+        role = p.get("role")
+        kinds = (p.get("internal_chat_message_metadata_passthrough") or {}).get("content_item_kinds")
+        if role == "assistant":
+            return [{"id": uid, "kind": "assistant", "ts": ts, "text": codex_text(p), "extra": {"phase": p.get("phase")}}]
+        # injected AGENTS.md, environment context and shell-command echoes are tagged with other kinds
+        human = role == "user" and "user.text" in (kinds or ["user.text"])
+        return [{"id": uid, "kind": "user" if human else "meta", "ts": ts, "name": role,
+                 "text": codex_text(p), "extra": {"kinds": kinds}}]
+    if t == "reasoning":
+        text = "\n".join(s.get("text", "") for s in p.get("summary") or [])
+        return [{"id": uid, "kind": "thinking", "ts": ts, "text": text}] if text else []  # usually encrypted only
+    if t == "custom_tool_call":
+        script = p.get("input") or ""
+        # the exec tool runs a script calling tools.exec_command({cmd:"..."}) or applying a patch;
+        # pull the commands or patched files out for the session view
+        cmds = [js_str(c) for c in re.findall(r'\bcmd:\s*"((?:[^"\\]|\\.)*)"', script)]
+        files = re.findall(r"\*\*\* (?:Add|Update|Delete) File: (.+?)(?:\\n|\n|\"|$)", script)
+        inp = ({"command": "\n".join(cmds)} if cmds else {"path": "\n".join(files)} if files else {}) | {"script": script}
+        return [{"id": p.get("call_id") or uid, "kind": "tool", "ts": ts, "name": p.get("name"), "input": inp, "output": None}]
+    if t == "custom_tool_call_output":
+        out = p.get("output")
+        out = "\n".join(c.get("text", "") for c in out) if isinstance(out, list) else str(out)
+        return [{"id": uid, "kind": "result", "ts": ts, "tool": p.get("call_id"), "output": out, "error": False}]
+    return [{"id": uid, "kind": "meta", "ts": ts, "name": t, "extra": p}]
+
+
+def codex_tail(sid, offset):
+    return jsonl_tail(CODEX, codex_events, sid, offset)
+
+
 # ---------- http ----------
 
 def sessions():
     """Newest first, with subagent/child sessions listed directly under their parent."""
-    all_ = claude_sessions() + opencode_sessions()
+    all_ = claude_sessions() + opencode_sessions() + codex_sessions()
     ids = {s["id"] for s in all_}
     kids = {}
     for s in all_:
@@ -355,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/sessions":
                 body = json.dumps(sessions()).encode()
             elif u.path == "/api/events":
-                tail = {"claude": claude_tail, "opencode": opencode_tail}[q["source"]]
+                tail = {"claude": claude_tail, "opencode": opencode_tail, "codex": codex_tail}[q["source"]]
                 events, cursor = tail(q["id"], int(q.get("cursor", 0)))
                 body = json.dumps({"events": events, "cursor": cursor}).encode()
             else:
@@ -379,7 +489,7 @@ if __name__ == "__main__":
     ap.add_argument("--config", help="config file (default: $ATV_CONFIG, then ~/.config/atv/config.json)")
     args = ap.parse_args()
     cfg_port, roots, COLORS = load_config(args.config)
-    CLAUDE, OPENCODE = roots["claude"], roots["opencode"]
+    CLAUDE, OPENCODE, CODEX = roots["claude"], roots["opencode"], roots["codex"]
     port = next(p for p in (args.port, args.port_arg, cfg_port, 8765) if p is not None)
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     # The Electron wrapper parses this line from a pipe: keep the wording and the flush.
