@@ -23,6 +23,10 @@
   .s .sub { color: #595959; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #c6c6c6; }
+  /* brand colours; .s raises these over the selected row's .s.active * */
+  .s .src.claude { background: #d97757; color: #fff; }
+  .s .src.codex { background: #10a37f; color: #fff; }
+  .s .src.opencode { background: #211e1e; color: #fff; }
   .live { color: #0b8a00; }
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   header { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-bottom: 1px solid #b4b4b4; }
