@@ -61,9 +61,16 @@ with tempfile.TemporaryDirectory() as tmp:
     (tmp / "sessions").mkdir()
     for status, pid, want in [("waiting", os.getpid(), True), ("idle", os.getpid(), True),
                               ("busy", os.getpid(), False), ("idle", 2 ** 22 + 1, False)]:  # above pid_max
-        (tmp / "sessions/1.json").write_text(json.dumps({"pid": pid, "sessionId": "abc", "status": status}))
+        (tmp / "sessions/1.json").write_text(json.dumps(
+            {"pid": pid, "sessionId": "abc", "status": status, "statusUpdatedAt": time.time() * 1000}))
         assert [s["waiting"] for s in server.claude_sessions()] == [want, want], (status, pid)
         assert [s["live"] for s in server.claude_sessions()] == [pid == os.getpid()] * 2, (status, pid)
+    # a process left open for hours is live only while it works or waits on a prompt, not when idle
+    old = time.time() * 1000 - 2 * server.LIVE_MS
+    for status, want in [("busy", True), ("waiting", True), ("idle", False), ("shell", False)]:
+        (tmp / "sessions/1.json").write_text(json.dumps(
+            {"pid": os.getpid(), "sessionId": "abc", "status": status, "statusUpdatedAt": old}))
+        assert [s["live"] for s in server.claude_sessions()] == [want, want], status
     # after /clear the running process names its new session, so the old one is no longer live
     (tmp / "sessions/1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "new", "status": "busy"}))
     assert not any(s["live"] for s in server.claude_sessions())

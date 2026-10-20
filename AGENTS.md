@@ -82,8 +82,9 @@ hash lists the open session keys, each URI-encoded and joined with `,`.
   top-level session whose last message is `idle`, updated within a day.
 - **Live** (`live` on a session; the "Open live" button opens these and closes the other panes): for Claude Code,
   a top-level session whose process is still running per `claude_live` (after `/clear` the status file names the
-  new session, so the old one drops out). For opencode, a top-level session that is waiting or was updated in the
-  last 5 minutes. The button respects the project filter and search box.
+  new session, so the old one drops out) and is `busy` or `waiting`, or changed status (`statusUpdatedAt`) within
+  `LIVE_MS` (30 min). Not the transcript mtime, which background writes can bump. For opencode, a top-level session
+  updated within `LIVE_MS`. The button respects the project filter and search box.
 
 ## Checking changes
 

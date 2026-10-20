@@ -22,6 +22,7 @@ CLAUDE = [Path(p).expanduser() for p in DEFAULTS["claude"]]      # roots; sessio
 OPENCODE = [Path(p).expanduser() for p in DEFAULTS["opencode"]]
 COLORS = {}  # project directory -> CSS colour from the config; other projects get a hashed one in the browser
 HERE = Path(__file__).parent
+LIVE_MS = 30 * 60e3  # a session left idle longer than this isn't live, even if its process is still open
 
 
 def load_config(path=None):
@@ -131,7 +132,7 @@ def claude_info(p, i=0):
 
 
 def claude_live():
-    """Session id -> status (busy, idle, waiting, ...) of the Claude Code processes still running.
+    """Session id -> status file (status: busy, idle, waiting, shell, ...) of the Claude Code processes still running.
 
     Each one keeps a <pid>.json in the sessions dir beside the projects dir. The transcript alone can't
     tell an idle session from a closed one, and never shows a pending permission prompt."""
@@ -142,22 +143,25 @@ def claude_live():
                 d = json.loads(f.read_text())
                 if os.name == "posix":
                     os.kill(d["pid"], 0)  # signal 0 sends nothing; it raises if the process is gone
-                out[d["sessionId"]] = d.get("status")
+                out[d["sessionId"]] = d
             except (OSError, ValueError, KeyError, TypeError):  # stale or half-written file
                 pass
     return out
 
 
 def claude_sessions():
-    out, live = [], claude_live()
+    out, live, now = [], claude_live(), time.time() * 1000
     for i, root in enumerate(CLAUDE):
         for p in [*root.glob("*/*.jsonl"), *root.glob("*/*/subagents/*.jsonl")]:
             try:
                 # idle: turn finished; waiting: blocked on a permission prompt or a question
-                info = claude_info(p, i)
+                info, st = claude_info(p, i), live.get(p.stem, {})
                 if not info["empty"]:
-                    # live: its process is still running (after /clear the status file names the new session)
-                    out.append({**info, "waiting": live.get(p.stem) in ("idle", "waiting"), "live": p.stem in live})
+                    # live: its process is still running (after /clear the status file names the new session) and
+                    # it is working, or changed status recently. Not the transcript mtime: background writes bump it.
+                    out.append({**info, "waiting": st.get("status") in ("idle", "waiting"),
+                                "live": bool(st) and (st.get("status") in ("busy", "waiting")
+                                                      or now - (st.get("statusUpdatedAt") or 0) < LIVE_MS)})
             except (OSError, ValueError) as e:
                 print(f"skip {p}: {e}", file=sys.stderr)
     return out
@@ -259,7 +263,7 @@ def opencode_sessions():
             waiting = last == "idle" and not par and upd > now - 86400e3
             out.append({"source": "opencode", "id": f"{n}/{i}", "parent": par and f"{n}/{par}",
                         "title": title or "(untitled)", "cwd": cwd or "", "updated": upd, "waiting": waiting,
-                        "live": waiting or not par and upd > now - 300e3})   # waiting, or busy in the last 5 min
+                        "live": not par and upd > now - LIVE_MS})
     return out
 
 
