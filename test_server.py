@@ -63,6 +63,10 @@ with tempfile.TemporaryDirectory() as tmp:
                               ("busy", os.getpid(), False), ("idle", 2 ** 22 + 1, False)]:  # above pid_max
         (tmp / "sessions/1.json").write_text(json.dumps({"pid": pid, "sessionId": "abc", "status": status}))
         assert [s["waiting"] for s in server.claude_sessions()] == [want, want], (status, pid)
+        assert [s["live"] for s in server.claude_sessions()] == [pid == os.getpid()] * 2, (status, pid)
+    # after /clear the running process names its new session, so the old one is no longer live
+    (tmp / "sessions/1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "new", "status": "busy"}))
+    assert not any(s["live"] for s in server.claude_sessions())
 
     # ids are untrusted: each must stay inside the root it names, and name a root that exists
     for bad in ["0/../r1/proj/abc", "0/../secret", "1/../r0/proj/abc", "0/../../etc/passwd", f"0/{r1}/proj/abc",
@@ -90,6 +94,7 @@ with tempfile.TemporaryDirectory() as tmp:
         ("0/s", None, "db0"), ("0/k", "0/s", "kid"), ("1/s", None, "db1"), ("1/k", "1/s", "kid")]
     # ended on an idle message and recently updated; the same session a long time ago doesn't count
     assert [s["waiting"] for s in server.opencode_sessions()] == [False, False, True, False]
+    assert [s["live"] for s in server.opencode_sessions()] == [False, False, True, False]   # children never
     events, cursor = server.opencode_tail("1/s", 0)
     assert events[0]["text"] == "hi1" and cursor == 5
     for bad in ["2/s", "s", "-1/s"]:

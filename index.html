@@ -73,6 +73,7 @@
 <main>
   <header>
     <label><input type="checkbox" id="meta"> meta</label>
+    <button id="live" title="Open every running top-level session in the list; close the other panes">Open live</button>
     <button id="expand">Expand all</button>
   </header>
   <div id="panes"></div>
@@ -139,25 +140,26 @@ function renderProjects() {
   rows.forEach((g, i) => box.children[i].firstChild.checked = projects.has(g.cwd));
 }
 
+const shown = () => {   // the sessions the sidebar lists, after the project filter and the search box
+  const q = $('q').value.toLowerCase();
+  return sessions.filter(s => (!projects.size || projects.has(s.project)) && (s.title + s.cwd).toLowerCase().includes(q));
+};
+
 function renderList() {
   renderProjects();
-  const q = $('q').value.toLowerCase();
-  $('list').replaceChildren(...sessions
-    .filter(s => !projects.size || projects.has(s.project))
-    .filter(s => (s.title + s.cwd).toLowerCase().includes(q))
-    .map(s => {
-      const d = el('div', 's' + (pane(s) ? ' active' : ''));
-      paint(d, s.project, s.color);
-      d.style.paddingLeft = 10 + s.depth * 16 + 'px';
-      const sub = el('div', 'sub');
-      const cwd = el('span', 'cwd', name(s.project));   // the project, so a subagent in a subdirectory still shows it
-      cwd.title = s.cwd;
-      sub.append(el('span', 'src ' + s.source, s.source), cwd, stamp(s.updated));
-      d.append(el('div', 'ti', title(s)), sub);
-      d.title = s.title;
-      d.onclick = ev => adding(ev) ? toggle(s) : select(s);
-      return d;
-    }));
+  $('list').replaceChildren(...shown().map(s => {
+    const d = el('div', 's' + (pane(s) ? ' active' : ''));
+    paint(d, s.project, s.color);
+    d.style.paddingLeft = 10 + s.depth * 16 + 'px';
+    const sub = el('div', 'sub');
+    const cwd = el('span', 'cwd', name(s.project));   // the project, so a subagent in a subdirectory still shows it
+    cwd.title = s.cwd;
+    sub.append(el('span', 'src ' + s.source, s.source), cwd, stamp(s.updated));
+    d.append(el('div', 'ti', title(s)), sub);
+    d.title = s.title;
+    d.onclick = ev => adding(ev) ? toggle(s) : select(s);
+    return d;
+  }));
 }
 
 async function loadSessions() {
@@ -225,6 +227,13 @@ function select(s) {
 function toggle(s) {
   const p = pane(s);
   p ? closePane(p) : openPane(s);
+  sync();
+}
+
+function openLive() {   // panes become the live top-level sessions listed; ones already open keep their place
+  const want = shown().filter(s => s.live && !s.depth), keep = new Set(want.map(key));
+  for (const p of [...panes]) if (!keep.has(key(p.s))) closePane(p);
+  for (const s of want) if (!pane(s)) openPane(s);
   sync();
 }
 
@@ -323,6 +332,7 @@ for (const grip of document.querySelectorAll('body > .grip')) {   // drag to set
   grip.onpointerup = () => grip.onpointermove = null;
 }
 $('meta').onchange = e => $('panes').classList.toggle('show-meta', e.target.checked);
+$('live').onclick = openLive;
 $('expand').onclick = () => {
   expanded = !expanded;
   $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';

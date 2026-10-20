@@ -80,6 +80,10 @@ hash lists the open session keys, each URI-encoded and joined with `,`.
   `<pid>.json` status files in the `sessions` dir beside each projects root (`claude_live`), counting `idle`
   and `waiting` for processes still running; the transcript can't tell idle from closed. For opencode it is a
   top-level session whose last message is `idle`, updated within a day.
+- **Live** (`live` on a session; the "Open live" button opens these and closes the other panes): for Claude Code,
+  a top-level session whose process is still running per `claude_live` (after `/clear` the status file names the
+  new session, so the old one drops out). For opencode, a top-level session that is waiting or was updated in the
+  last 5 minutes. The button respects the project filter and search box.
 
 ## Checking changes
 

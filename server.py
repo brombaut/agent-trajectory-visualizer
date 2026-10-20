@@ -156,7 +156,8 @@ def claude_sessions():
                 # idle: turn finished; waiting: blocked on a permission prompt or a question
                 info = claude_info(p, i)
                 if not info["empty"]:
-                    out.append({**info, "waiting": live.get(p.stem) in ("idle", "waiting")})
+                    # live: its process is still running (after /clear the status file names the new session)
+                    out.append({**info, "waiting": live.get(p.stem) in ("idle", "waiting"), "live": p.stem in live})
             except (OSError, ValueError) as e:
                 print(f"skip {p}: {e}", file=sys.stderr)
     return out
@@ -240,7 +241,7 @@ def oc_db(path):
 
 
 def opencode_sessions():
-    out = []
+    out, now = [], time.time() * 1000
     for n, path in enumerate(OPENCODE):
         if not path.exists():
             continue
@@ -252,12 +253,13 @@ def opencode_sessions():
         except sqlite3.Error as e:
             print(f"opencode {path}: {e}", file=sys.stderr)
             continue
-        out += [{"source": "opencode", "id": f"{n}/{i}", "parent": par and f"{n}/{par}",
-                 "title": title or "(untitled)", "cwd": cwd or "", "updated": upd,
-                 # An idle message ends each turn. ponytail: nothing says whether opencode is still
-                 # running, so a day-old one counts as closed; use a process check if one turns up.
-                 "waiting": last == "idle" and not par and upd > time.time() * 1000 - 86400e3}
-                for i, par, title, cwd, upd, last in rows]
+        for i, par, title, cwd, upd, last in rows:
+            # An idle message ends each turn. ponytail: nothing says whether opencode is still
+            # running, so a day-old one counts as closed; use a process check if one turns up.
+            waiting = last == "idle" and not par and upd > now - 86400e3
+            out.append({"source": "opencode", "id": f"{n}/{i}", "parent": par and f"{n}/{par}",
+                        "title": title or "(untitled)", "cwd": cwd or "", "updated": upd, "waiting": waiting,
+                        "live": waiting or not par and upd > now - 300e3})   # waiting, or busy in the last 5 min
     return out
 
 
