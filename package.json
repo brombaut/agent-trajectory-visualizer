@@ -4,6 +4,7 @@
   "desktopName": "atv.desktop",
   "version": "0.1.0",
   "description": "Agent Trajectory Visualizer",
+  "license": "MIT",
   "private": true,
   "main": "electron/main.js",
   "scripts": {

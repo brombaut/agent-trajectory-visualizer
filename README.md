@@ -34,6 +34,8 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 
 ## The terrain
 
+![Three sessions side by side, with a failed tool call and an assistant reply expanded](assets/screenshot.png)
+
 - **Sessions** on the left, newest first, with subagent sessions nested under their parent. Each is tinted
   with its project's colour (a project is a working directory), and the dropdown above filters to one or more projects.
   A 🔔 marks a session that is waiting for you.
@@ -42,7 +44,9 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 - **Side by side**: Ctrl+click (Cmd+click on macOS) a session to open it in another column, or again to
   close it. Drag the divider between two columns to resize
   them. The URL keeps the set of open sessions, so a reload restores it.
+- **Focus**: ⤢ in a column's header shows that session alone, full width. ⤢ again or Esc puts the columns back.
 - **Live**: every open session is tailed every 1.5s and follows the bottom unless you scroll that column up.
+  **Open live** opens every session still running (within the project filter and search) and closes the rest.
 - **meta** shows the background records hidden by default: system reminders, hook output, attachments.
 
 ## Where it looks
@@ -59,10 +63,3 @@ Everything is read-only, and the server only listens on localhost, since session
 
 Optional. To look somewhere else, or in several places, write a JSON config file:
 see [CONFIG.md](CONFIG.md).
-
-## Under the hood
-
-- `server.py` turns every format into one event shape and serves it as JSON.
-- `index.html` is the whole frontend, no dependencies.
-- `electron/main.js` is the desktop shell: it starts `server.py` and points a window at it.
-- `test_server.py` is a small self-check: `python3 test_server.py`.

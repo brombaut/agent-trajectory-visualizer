@@ -21,7 +21,7 @@ server, so there that means restarting the app. Changes to `electron/main.js` al
 - `server.py`: finds sessions, normalizes all three formats into one event shape, serves JSON.
 - `index.html`: the entire frontend (CSS and JS inline).
 - `test_server.py`: plain-assert checks for the parsers and the tailing logic.
-- `assets/`: README images, and `icon.png` (the app icon, cropped from the banner). The `*-dark.png` files are the
+- `assets/`: README images (`screenshot.png` is of made-up sessions, never real ones), and `icon.png` (the app icon, cropped from the banner). The `*-dark.png` files are the
   originals from the old dark theme, kept but unused.
 - `README.md`: kept short on purpose, just what ATV is and how to run it. Reference detail goes in
   `CONFIG.md` (the config file) and `electron/README.md` (desktop app notes: sandbox fix, launcher
@@ -56,7 +56,9 @@ Every record becomes one or more events:
 The browser polls `/api/events?source=&id=&cursor=` and upserts events by `id`, so re-sending an
 event is harmless and an updated event replaces its row in place.
 Each open session is a pane (a column) with its own cursor and event map, polled separately; the URL
-hash lists the open session keys, each URI-encoded and joined with `,`.
+hash lists the open session keys, each URI-encoded and joined with `,`. Focus (`focus()`, the ⤢ button) hides
+the sidebar and the other panes with CSS; they keep polling, and their scroll positions are restored on return.
+Focus is not in the hash.
 
 - **Claude Code** (default root `~/.claude/projects`; `<project>/<session>.jsonl`, subagents in `<session>/subagents/`):
   append-only, so the cursor is a byte offset and a half-written last line is left for the next poll.
