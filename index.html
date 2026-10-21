@@ -39,6 +39,7 @@
   .pane:first-child .grip { display: none; }
   body > .grip { position: relative; left: 0; flex: none; margin: 0 -3px; }
   .pane + .pane { border-left: 1px solid #b4b4b4; }
+  .focus aside, .focus .grip, .focus .pane:not(.focused) { display: none; }   /* one pane alone, full width */
   .ph { display: flex; gap: 8px; align-items: center; padding: 4px 12px; border-bottom: 1px solid #b4b4b4;
         background: var(--p); color: #000; font-weight: 600; }
   .ph button { background: none; border-color: #0005; }
@@ -92,7 +93,7 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-let sessions = [], projects = new Set() /* cwds to list; empty = all */, expanded = false;
+let sessions = [], projects = new Set() /* cwds to list; empty = all */, expanded = false, focused = null;
 const panes = [];   // open sessions, one column each: {s, cursor, byId: event id -> {e, json, node}, node, box, ti}
 
 const ago = ms => {
@@ -193,10 +194,12 @@ function openPane(s) {
   const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
               ti: el('span', 'ti', paneTitle(s)) };
   p.ti.title = s.cwd;
-  const head = el('div', 'ph'), x = el('button', '', '×');
+  const head = el('div', 'ph'), f = el('button', '', '⤢'), x = el('button', '', '×');
+  f.title = 'Focus: show only this pane (Esc to go back)';
+  f.onclick = () => focus(focused === p ? null : p);
   x.title = 'Close';
   x.onclick = () => { closePane(p); sync(); };
-  head.append(p.ti, x);
+  head.append(p.ti, f, x);
   const grip = el('div', 'grip');   // drag a column's left edge to trade width with the column before it
   grip.onpointerdown = ev => {
     const a = p.node.previousElementSibling, b = p.node, wa = a.offsetWidth, wb = b.offsetWidth, x = ev.clientX;
@@ -218,6 +221,7 @@ function openPane(s) {
 }
 
 function closePane(p) {
+  if (p === focused) focus(null);
   p.node.remove();
   panes.splice(panes.indexOf(p), 1);
 }
@@ -234,7 +238,20 @@ function toggle(s) {
   sync();
 }
 
+// Show one pane alone (sidebar hidden too), or null for all of them again. Hidden panes keep polling;
+// display: none loses their scroll positions, so those are saved here and put back, following the bottom
+// for panes that were at it or opened meanwhile.
+function focus(p) {
+  if (p && !focused) for (const q of panes) q.top = atBottom(q.box) ? null : q.box.scrollTop;
+  const was = focused;
+  focused = p;
+  document.body.classList.toggle('focus', !!p);
+  for (const q of panes) q.node.classList.toggle('focused', q === p);
+  if (!p) for (const q of panes) if (q !== was) q.box.scrollTop = q.top ?? q.box.scrollHeight;
+}
+
 function openLive() {   // panes become the live top-level sessions listed; ones already open keep their place
+  focus(null);
   const want = shown().filter(s => s.live && !s.depth), keep = new Set(want.map(key));
   for (const p of [...panes]) if (!keep.has(key(p.s))) closePane(p);
   for (const s of want) if (!pane(s)) openPane(s);
@@ -246,6 +263,8 @@ function sync() {
   renderList();
 }
 
+const atBottom = box => box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+
 async function poll(p) {
   const first = p.cursor === 0;
   const r = await fetch(`/api/events?source=${p.s.source}&id=${encodeURIComponent(p.s.id)}&cursor=${p.cursor}`);
@@ -253,10 +272,9 @@ async function poll(p) {
   const data = await r.json();
   if (!panes.includes(p)) return;   // closed mid-request
   p.cursor = data.cursor;
-  const box = p.box;
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const box = p.box, follow = atBottom(box);
   data.events.forEach(e => upsert(p, e));
-  if (first || atBottom) box.scrollTop = box.scrollHeight;   // follow live output unless this column is scrolled up
+  if (first || follow) box.scrollTop = box.scrollHeight;   // follow live output unless this column is scrolled up
 }
 
 function upsert(p, e) {
@@ -337,6 +355,7 @@ for (const grip of document.querySelectorAll('body > .grip')) {   // drag to set
 }
 $('meta').onchange = e => $('panes').classList.toggle('show-meta', e.target.checked);
 $('live').onclick = openLive;
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && focused) focus(null); });
 $('expand').onclick = () => {
   expanded = !expanded;
   $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';
