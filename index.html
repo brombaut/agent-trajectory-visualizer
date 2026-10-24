@@ -44,6 +44,9 @@
         background: var(--p); color: #000; font-weight: 600; }
   .ph button { background: none; border-color: #0005; }
   .ph .ti { flex: 1; }
+  .tl { padding: 2px 12px; border-bottom: 1px solid #b4b4b4; color: #595959; font-size: 11px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* where the time went: summary() */
+  .tl:empty { display: none; }
   .events { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
   /* --k is the turn type colour: the same in every project */
   .ev { --k: #c6c6c6; border-left: 4px solid var(--k); margin: 2px 0; background: #e4e4e4; border-radius: 0 4px 4px 0; }
@@ -192,7 +195,7 @@ async function loadSessions() {
 
 function openPane(s) {
   const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
-              ti: el('span', 'ti', paneTitle(s)) };
+              ti: el('span', 'ti', paneTitle(s)), tl: el('div', 'tl') };
   p.ti.title = s.cwd;
   const head = el('div', 'ph'), f = el('button', '', '⤢'), x = el('button', '', '×');
   f.title = 'Focus: show only this pane (Esc to go back)';
@@ -214,7 +217,7 @@ function openPane(s) {
   };
   grip.onpointerup = () => grip.onpointermove = null;
   paint(p.node, s.project, s.color);
-  p.node.append(grip, head, p.box);
+  p.node.append(grip, head, p.tl, p.box);
   $('panes').append(p.node);
   panes.push(p);
   poll(p).catch(console.error);
@@ -275,13 +278,78 @@ async function poll(p) {
   const box = p.box, follow = atBottom(box);
   data.events.forEach(e => upsert(p, e));
   if (first || follow) box.scrollTop = box.scrollHeight;   // follow live output unless this column is scrolled up
+  if (data.events.length) {
+    p.tl.textContent = summary(p);
+    p.tl.title = p.tl.textContent && p.tl.textContent + '\n\n' + LEGEND;   // in full: narrow panes cut the line
+  }
+}
+
+const IDLE = 5 * 60e3;   // ponytail: one fixed threshold, so a single model call over 5 min counts as idle too
+const ASKS = ['AskUserQuestion', 'ExitPlanMode'];   // tool calls that wait for your answer rather than run
+// The end of a turn in Claude Code, Codex, Claude Code (when the last block was thinking, which isn't sent) and opencode
+const turnEnd = e => e.extra?.stop_reason === 'end_turn' || e.extra?.phase === 'final_answer'
+  || e.name === 'turn_duration' || e.name === 'idle';
+const LEGEND = `model: generating or thinking
+tools: tool calls running
+you: waiting for your prompt, or your answer to a question
+background: turn over, waiting on subagents or background tasks
+idle: gaps over 5 min, left out of active
+ctx: context size at the last API call`;
+const dur = ms => {   // 45s, 12m, 1h12m, 2d3h
+  const m = Math.round(ms / 60e3);
+  return m < 1 ? `${Math.round(ms / 1e3)}s` : m < 60 ? `${m}m`
+    : m < 1440 ? `${m / 60 | 0}h${m % 60}m` : `${m / 1440 | 0}d${m / 60 % 24 | 0}h`;
+};
+
+// Where a pane's time went. Each gap between timestamps is charged to what was pending when it began: a tool
+// call, a question to you, or else the model. After a turn ends the wait is yours if your prompt ends it, and
+// background if something else (a task notification) wakes the agent.
+function summary(p) {
+  const pts = [];   // [time, event, is the end of a tool call]
+  for (const { e } of p.byId.values()) {
+    if (e.ts) pts.push([+new Date(e.ts), e]);
+    if (e.end) pts.push([+new Date(e.end), e, true]);
+  }
+  pts.sort((a, b) => a[0] - b[0]);
+  const t = { model: 0, tools: 0, you: 0, background: 0, idle: 0 }, open = new Set();
+  let last = pts[0]?.[0], done = false, wait = 0, ctx = 0, peak = 0, win = 0, compactions = 0;
+  for (const [at, e, end] of pts) {
+    const gap = at - last;
+    last = at;
+    if (gap > IDLE && ![...open].some(c => c.end)) t.idle += gap;   // inside a call that did finish, a real wait
+    else if (done) wait += gap;
+    else t[!open.size ? 'model' : [...open].some(c => ASKS.includes(c.name)) ? 'you' : 'tools'] += gap;
+    if (end) { open.delete(e); continue; }
+    if (done && !['meta', 'system'].includes(e.kind)) {   // working again: what woke it?
+      t[e.kind === 'user' ? 'you' : 'background'] += wait;
+      done = false;
+      wait = 0;
+    }
+    if (e.kind === 'tool') open.add(e);
+    if (turnEnd(e)) { done = true; open.clear(); }
+    const u = e.extra?.usage, k = e.extra?.tokens, c = e.extra?.last_token_usage;   // Claude Code, opencode, Codex
+    const n = u ? (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
+      : k ? (k.input || 0) + (k.cache?.read || 0) + (k.cache?.write || 0) : c?.input_tokens;
+    if (n) { ctx = n; peak = Math.max(peak, n); }
+    win = e.extra?.model_context_window || win;
+    compactions += ['compact_boundary', 'compaction'].includes(e.name);
+  }
+  t.you += wait;   // still waiting on whatever comes next
+  const active = t.model + t.tools + t.you + t.background, kt = n => `${Math.round(n / 1e3)}k`;
+  if (!active) return '';
+  return [
+    'active ' + dur(active) + ': ' + ['model', 'tools', 'you', 'background'].filter(x => t[x] >= 500).map(x => `${x} ${dur(t[x])}`).join(', '),
+    t.idle && 'idle ' + dur(t.idle),
+    peak && [`ctx ${kt(ctx)}${win ? '/' + kt(win) : ''}`, peak > ctx && 'peak ' + kt(peak),
+             compactions && `compacted ${compactions}×`].filter(Boolean).join(', '),
+  ].filter(Boolean).join(' · ');
 }
 
 function upsert(p, e) {
   if (e.kind === 'result') {   // Claude logs tool results as separate records; fold into the call
     const call = p.byId.get(e.tool);
-    e = call ? { ...call.e, output: e.output, error: e.error }
-             : { ...e, kind: 'tool', name: 'tool result' };
+    e = call ? { ...call.e, output: e.output, error: e.error, end: e.ts }
+             : { ...e, kind: 'tool', name: 'tool result', end: e.ts };
   }
   const old = p.byId.get(e.id), json = JSON.stringify(e);
   if (old && old.json === json) return;

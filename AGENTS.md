@@ -50,8 +50,11 @@ server, so there that means restarting the app. Changes to `electron/main.js` al
 Every record becomes one or more events:
 
 ```
-{id, kind: user|assistant|thinking|tool|result|system|meta, ts, text?, name?, input?, output?, error?, extra?}
+{id, kind: user|assistant|thinking|tool|result|system|meta, ts, text?, name?, input?, output?, error?, end?, extra?}
 ```
+
+`end` is when a tool call's result came: set by the server for opencode, and by the browser when it folds a
+`result` into its call for the other two.
 
 The browser polls `/api/events?source=&id=&cursor=` and upserts events by `id`, so re-sending an
 event is harmless and an updated event replaces its row in place.
@@ -70,8 +73,8 @@ Focus is not in the hash.
   rows are rewritten while a message streams, so the cursor is the max `time_updated` and the query
   uses `>=`; the browser drops unchanged events.
 - **Codex** (default root `~/.codex/sessions`; `YYYY/MM/DD/rollout-<time>-<uuid>.jsonl`): append-only, tailed
-  like Claude Code. Only `response_item` records become events; the `event_msg` records repeat the same messages
-  and commands. Injected context (AGENTS.md, environment, `developer` messages) is `meta`: a `user` message is only
+  like Claude Code. Only `response_item` records and `token_count` ones (as `meta`, for the context size) become
+  events; the other `event_msg` records repeat the same messages and commands. Injected context (AGENTS.md, environment, `developer` messages) is `meta`: a `user` message is only
   human if its `content_item_kinds` include `user.text`. Tool calls are `exec` JS scripts; the `cmd:` strings and
   patched file paths are pulled out as `command`/`path`. Reasoning is encrypted, so it shows only if a summary is
   present. Titles come from `session_index.jsonl` beside the root. No subagents seen yet.
@@ -81,6 +84,12 @@ Focus is not in the hash.
 - **Startup line**: after binding, the server prints `listening on http://127.0.0.1:<port>` and flushes.
   `electron/main.js` parses the port from it, so keep the wording and the flush.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
+- **Time summary** (the line under each pane's header, `summary()`): computed in the browser from the pane's events.
+  Each gap between timestamps goes to what was pending when it began: a tool call (`AskUserQuestion` and
+  `ExitPlanMode` count as you), else the model. After a turn ends (per format: `turnEnd`) the wait is yours if
+  a user event ends it, background otherwise (async subagents end the parent's turn and wake it with a task
+  notification). Gaps over 5 min are idle unless a call that later finished was open. First step of issue #14,
+  a per-session timeline strip.
 - A project is a session's working directory; subagents inherit their parent's project. Grouping is done in the browser.
 - **Project colours**: hashed from the project path in the browser (`hue`), unless the config file's `projects`
   gives that directory a `color`; `sessions()` then sends it as `color` and the browser uses it as is (`paint`).

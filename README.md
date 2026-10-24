@@ -41,6 +41,8 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
   A 🔔 marks a session that is waiting for you.
 - **Trajectory** on the right: one line per user message, assistant reply and tool call.
   Click a line for the full text, tool inputs, output and token details, or hit **Expand all**.
+  The line under a column's header says where the session's time went (the model, tools, you, background
+  work, idle) and how full its context is; hover it for what each part means.
 - **Side by side**: Ctrl+click (Cmd+click on macOS) a session to open it in another column, or again to
   close it. Drag the divider between two columns to resize
   them. The URL keeps the set of open sessions, so a reload restores it.

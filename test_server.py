@@ -134,12 +134,16 @@ with tempfile.TemporaryDirectory() as tmp:
         item(9, {"type": "custom_tool_call", "id": "c2", "call_id": "call2", "name": "exec",
                  "input": 'const patch = "*** Begin Patch\\n*** Add File: /x/n.py\\n+hi\\n*** End Patch";'}),
         item(10, {"type": "message", "id": "m10", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}),
+        {"timestamp": "t", "ordinal": 11, "type": "event_msg", "payload": {"type": "token_count", "info": None}},
+        {"timestamp": "t", "ordinal": 12, "type": "event_msg", "payload": {"type": "token_count", "info": {
+            "last_token_usage": {"input_tokens": 5}, "model_context_window": 9}}},
     ]
     cf.write_text("".join(json.dumps(r) + "\n" for r in recs) + '{"timestamp": "t", "ordinal": 11, "type": "resp')
     events, cursor = server.codex_tail("0/2026/10/20/rollout-1-abc", 0)
     assert [(e["kind"], e.get("name")) for e in events] == [
         ("meta", "developer"), ("meta", "user"), ("user", "user"), ("tool", "exec"), ("result", None),
-        ("tool", "exec"), ("assistant", None)], events
+        ("tool", "exec"), ("assistant", None), ("meta", "token_count")], events
+    assert events[7]["extra"]["last_token_usage"]["input_tokens"] == 5   # the pane's ctx; a count without info is dropped
     assert events[3]["id"] == events[4]["tool"] == "call1" and events[4]["output"] == "Script completed\nexit_code=0"
     assert events[3]["input"]["command"] == "printf 'a\\n' 'x'", events[3]["input"]
     assert events[5]["input"]["path"] == "/x/n.py", events[5]["input"]
@@ -213,7 +217,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
 oc = server.opencode_events("m1", "assistant", {"time": {"created": 1}, "content": [
     {"type": "reasoning", "text": ""},
-    {"type": "tool", "name": "read", "state": {"status": "error", "input": {}, "error": "nope"}},
+    {"type": "tool", "name": "read", "time": {"created": 2, "completed": 3}, "state": {"status": "error", "input": {}, "error": "nope"}},
     {"type": "tool", "name": "read", "state": {"status": "running", "input": {}}}]})
 assert [(e["output"], e["error"]) for e in oc] == [("nope", True), (None, False)], oc
+# a tool call is timed by its own start and end; without them it falls back to its message's start
+assert [(e["ts"], e["end"]) for e in oc] == [(2, 3), (1, None)], oc
 print("ok")

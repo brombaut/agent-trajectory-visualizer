@@ -293,14 +293,15 @@ def opencode_events(mid, typ, d):
                 if b.get("text"):  # usually encrypted, so empty
                     out.append(ev(i, "thinking", text=b["text"]))
             elif bt == "tool":
-                st = b.get("state") or {}
+                st, tm = b.get("state") or {}, b.get("time") or {}
                 status, err = st.get("status"), st.get("error")
                 if status == "error":
                     output = err if isinstance(err, str) else json.dumps(err, indent=2)
                 else:
                     output = text_of(st.get("content")) if status == "completed" else None
-                out.append(ev(i, "tool", name=b.get("name"), input=st.get("input"), output=output,
-                              error=status == "error", extra={**extra, "time": b.get("time")}))
+                # the call's own start and end, not its message's: the browser times tool calls with them
+                out.append(ev(i, "tool", ts=tm.get("created") or ts, end=tm.get("completed"), name=b.get("name"),
+                              input=st.get("input"), output=output, error=status == "error", extra={**extra, "time": tm}))
             else:
                 out.append(ev(i, "meta", name=bt, extra=b))
         if d.get("error"):
@@ -391,11 +392,13 @@ def js_str(s):
 
 
 def codex_events(d, n):
-    """One rollout record -> normalized events. Only response_item records are used: the event_msg
-    records repeat the same messages and commands, and the rest is settings and token counts."""
+    """One rollout record -> normalized events. Only response_item records and token counts are used: the
+    other event_msg records repeat the same messages and commands, and the rest is settings."""
+    p, ts = d.get("payload") or {}, d.get("timestamp")
+    if d.get("type") == "event_msg" and p.get("type") == "token_count" and p.get("info"):
+        return [{"id": str(n), "kind": "meta", "ts": ts, "name": "token_count", "extra": p["info"]}]  # context size
     if d.get("type") != "response_item":
         return []
-    p, ts = d.get("payload") or {}, d.get("timestamp")
     t, uid = p.get("type"), p.get("id") or str(n)
     if t == "message":
         role = p.get("role")
