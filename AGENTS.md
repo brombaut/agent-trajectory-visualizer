@@ -86,9 +86,9 @@ Focus is not in the hash.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
 - An expanded row's `details` section (`extra` as JSON) is hidden unless the details box is ticked (`show-details`),
   except in rows with nothing else to show, which is most `meta` rows (issue #16).
-- An expanded assistant message is rendered as markdown by `md()`/`inline()`, a small hand-written subset (headings,
-  lists, code, tables, quotes, bold, italic, http(s) links only) built with `el()` and text nodes. Its raw text is
-  there too, in a `.raw` `<pre>` shown instead when the raw box is ticked (`show-raw`) (issue #18).
+- Expanded assistant messages and thinking blocks are rendered as markdown by `md()`/`inline()`, a small hand-written
+  subset (headings, lists, code, tables, quotes, bold, italic, http(s) links only) built with `el()` and text nodes.
+  Their raw text is there too, in a `.raw` `<pre>` shown instead when the raw box is ticked (`show-raw`) (issues #18, #21).
 - A pane follows the bottom if it is within 80px of it when it polls. Row bodies are built when first opened; a row
   opened in code (Expand all, an open row replaced in place) builds its body at once (`setOpen`), and the view
   settings go through `keepBottom`, so neither leaves a following pane short of the bottom (issue #19).

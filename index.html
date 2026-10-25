@@ -116,7 +116,7 @@
   <header>
     <label><input type="checkbox" id="meta"> meta</label>
     <label title="In expanded rows, also show the raw metadata: model, token usage, stop reason…"><input type="checkbox" id="details"> details</label>
-    <label title="Show assistant messages as the plain markdown text, not rendered"><input type="checkbox" id="raw"> raw</label>
+    <label title="Show assistant messages and thinking blocks as plain markdown text, not rendered"><input type="checkbox" id="raw"> raw</label>
     <button id="live" title="Open every running top-level session in the list; close the other panes">Open live</button>
     <button id="expand">Expand all</button>
   </header>
@@ -564,8 +564,9 @@ function body(e) {
     if (label) b.append(el('h4', cls, label));
     b.append(el('pre', cls, typeof v === 'string' ? v : JSON.stringify(v, null, 2)));
   };
-  if (e.kind === 'assistant' && e.text) b.append(md(e.text));   // the raw text below shows instead if raw is ticked
-  sec(null, e.text, e.kind === 'assistant' ? 'raw' : '');
+  const markdown = ['assistant', 'thinking'].includes(e.kind);
+  if (markdown && e.text) b.append(md(e.text));   // the raw text below shows instead if raw is ticked
+  sec(null, e.text, markdown ? 'raw' : '');
   if (e.kind === 'tool') {
     // description first: it gives context before the command itself
     const input = Object.entries(e.input || {}).sort(([a], [b]) => (b === 'description') - (a === 'description'));
