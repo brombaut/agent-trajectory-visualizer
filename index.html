@@ -514,7 +514,10 @@ function upsert(p, e) {
 }
 
 function brief(e) {
-  if (e.kind !== 'tool') return (e.text || '').trim().slice(0, 400);
+  if (e.kind !== 'tool') {
+    const text = (e.text || '').trim();
+    return ['assistant', 'thinking'].includes(e.kind) ? preview(text).slice(0, 400) : text.slice(0, 400);
+  }
   const i = e.input || {};
   const arg = i.description ?? i.command ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.url ?? i.query
     ?? i.prompt ?? Object.values(i).find(v => typeof v === 'string') ?? '';
@@ -657,6 +660,24 @@ function inline(node, s) {
   }
   node.append(s.slice(at));
   return node;
+}
+
+function preview(text) {
+  let fence = null;
+  const lines = [];
+  for (const line of text.split('\n')) {
+    if (fence) {
+      const close = line.trim();
+      if (/^(`+|~+)$/.test(close) && close.startsWith(fence)) fence = null;
+      else lines.push(line);   // code stays literal inside a fence
+      continue;
+    }
+    const start = line.match(FENCE);
+    if (start) { fence = start[1]; continue; }
+    const plain = line.replace(/^(?: {0,3}> ?)+/, '').replace(HEAD, '$2').replace(LI, '$3');
+    lines.push(inline(el('span'), plain).textContent);
+  }
+  return lines.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 $('q').oninput = renderList;
