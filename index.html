@@ -490,8 +490,8 @@ function upsert(p, e) {
   const old = p.byId.get(e.id), json = JSON.stringify(e);
   if (old && old.json === json) return;
   if (!p.box) return p.byId.set(e.id, { e, json });   // a subagent's lane: events only, no rows
-  const node = row(e);
-  if (old) { node.open = old.node.open; old.node.replaceWith(node); }
+  const node = row(e, old ? old.node.open : expanded);
+  if (old) old.node.replaceWith(node);
   else p.box.append(node);
   p.byId.set(e.id, { e, json, node });
 }
@@ -510,7 +510,14 @@ function time(ts) {
   return t;
 }
 
-function row(e) {
+// Bodies can be huge, so they are built only when a row is first opened. Opening one this way builds it at once,
+// unlike the toggle event, which fires later: after poll() has scrolled a pane that follows the bottom (#19).
+function setOpen(d, e, open) {
+  if (open && d.children.length === 1) d.append(body(e));
+  d.open = open;
+}
+
+function row(e, open) {
   const d = el('details', `ev ${e.kind}${e.error ? ' err' : ''}`);
   if (e.ts) d.dataset.ts = +new Date(e.ts);   // in ms, for the strip's in-view outline
   const s = el('summary');
@@ -521,13 +528,12 @@ function row(e) {
     s.append(el('span', 'r', e.output == null ? 'running…'
       : `${e.error ? '✗' : '✓'} ${e.output ? e.output.split('\n').length : 0} lines`));
   d.append(s);
-  // Bodies can be huge; build them only when first opened.
-  d.addEventListener('toggle', () => { if (d.open && d.children.length === 1) d.append(body(e)); });
+  d.addEventListener('toggle', () => { if (d.open) setOpen(d, e, true); });   // opened by a click
   // Clicking the expanded area around the content collapses it (but not while selecting text).
   d.addEventListener('click', ev => {
     if (ev.target.closest('.body') && !ev.target.closest('pre') && !getSelection().toString()) d.open = false;
   });
-  d.open = expanded;
+  setOpen(d, e, open);
   return d;
 }
 
@@ -567,7 +573,11 @@ document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && focused)
 $('expand').onclick = () => {
   expanded = !expanded;
   $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';
-  for (const p of panes) for (const { node } of p.byId.values()) node.open = expanded;
+  for (const p of panes) {   // a pane at the bottom stays there
+    const follow = atBottom(p.box);
+    for (const { e, node } of p.byId.values()) setOpen(node, e, expanded);
+    if (follow) p.box.scrollTop = p.box.scrollHeight;
+  }
 };
 
 async function loop(fn, ms) {
