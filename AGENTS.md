@@ -84,6 +84,8 @@ Focus is not in the hash.
 - **Startup line**: after binding, the server prints `listening on http://127.0.0.1:<port>` and flushes.
   `electron/main.js` parses the port from it, so keep the wording and the flush.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
+- An expanded row's `details` section (`extra` as JSON) is hidden unless the details box is ticked (`show-details`),
+  except in rows with nothing else to show, which is most `meta` rows (issue #16).
 - **Where the time went** (issue #14): `walk()` turns a pane's events into segments, in the browser.
   Each gap between timestamps goes to what was pending when it began: a tool call (`AskUserQuestion` and
   `ExitPlanMode` count as you), else the model. After a turn ends (per format: `turnEnd`) the wait is yours if
