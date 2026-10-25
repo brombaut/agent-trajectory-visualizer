@@ -48,10 +48,11 @@
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* where the time went: summary() */
   .tl:empty { display: none; }
   .pane { container-type: inline-size; }   /* the strip shows only in panes wide enough to read it */
-  .strip { padding: 4px 12px; border-bottom: 1px solid #b4b4b4; }
+  .strip { position: relative; padding: 4px 12px; border-bottom: 1px solid #b4b4b4; }
   .strip:empty { display: none; }
   @container (max-width: 500px) { .strip { display: none; } }
-  .strip svg { display: block; width: 100%; height: 40px; }
+  .strip svg { display: block; width: 100%; }
+  .strip .top { position: absolute; left: 16px; font-size: 10px; line-height: 1; color: #595959; pointer-events: none; }
   .strip rect { cursor: pointer; }
   /* the turn type colours: model as the assistant, tools as tool calls, you as user messages */
   .strip .model { fill: #4dff4d; }
@@ -210,7 +211,7 @@ async function loadSessions() {
 
 function openPane(s) {
   const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
-              ti: el('span', 'ti', paneTitle(s)), tl: el('div', 'tl'), st: el('div', 'strip') };
+              ti: el('span', 'ti', paneTitle(s)), tl: el('div', 'tl'), st: el('div', 'strip'), kids: new Map() };
   p.box.onscroll = () => inView(p);
   p.ti.title = s.cwd;
   const head = el('div', 'ph'), f = el('button', '', '⤢'), x = el('button', '', '×');
@@ -284,18 +285,33 @@ function sync() {
 
 const atBottom = box => box.scrollHeight - box.scrollTop - box.clientHeight < 80;
 
-async function poll(p) {
-  const first = p.cursor === 0;
+async function get(p) {   // a session's events since p.cursor, moving the cursor on
   const r = await fetch(`/api/events?source=${p.s.source}&id=${encodeURIComponent(p.s.id)}&cursor=${p.cursor}`);
   if (!r.ok) throw new Error(await r.text());
   const data = await r.json();
-  if (!panes.includes(p)) return;   // closed mid-request
   p.cursor = data.cursor;
+  return data.events;
+}
+
+async function poll(p) {
+  const first = p.cursor === 0, events = await get(p);
+  if (!panes.includes(p)) return;   // closed mid-request
   const box = p.box, follow = atBottom(box);
-  data.events.forEach(e => upsert(p, e));
+  events.forEach(e => upsert(p, e));
   if (first || follow) box.scrollTop = box.scrollHeight;   // follow live output unless this column is scrolled up
-  if (data.events.length) {
-    const w = walk(p);
+  let changed = events.length;
+  // Subagents get a lane on the strip: their events are kept, without rows, and fetched again only once the
+  // session list says they changed.
+  for (const s of sessions.filter(s => s.parent === p.s.id && s.source === p.s.source)) {
+    const k = p.kids.get(key(s)) ?? { s, cursor: 0, byId: new Map() };
+    if (k.updated === s.updated) continue;
+    const kev = await get(k);
+    kev.forEach(e => upsert(k, e));
+    p.kids.set(key(s), Object.assign(k, { s, updated: s.updated }));
+    changed ||= kev.length;
+  }
+  if (changed) {
+    const w = walk(p, [...p.kids.values()]);
     p.tl.textContent = summary(w);
     p.tl.title = p.tl.textContent && p.tl.textContent + '\n\n' + LEGEND;   // in full: narrow panes cut the line
     strip(p, w);
@@ -323,23 +339,28 @@ const dur = ms => {   // 45s, 12m, 1h12m, 2d3h
 // was pending when it began: a tool call, a question to you, or else the model. After a turn ends the wait is
 // yours if your prompt ends it, and background if something else (a task notification) wakes the agent.
 // e is the row a click on the segment goes to: the call for tools, else the event that ended the gap.
-// ctx holds [index of the next segment, context size] per API call.
-function walk(p) {
-  const pts = [];   // [time, event, is the end of a tool call]
-  for (const { e } of p.byId.values()) {
-    if (e.ts) pts.push([+new Date(e.ts), e]);
-    if (e.end) pts.push([+new Date(e.end), e, true]);
-  }
+// ctx holds [time, context size] per API call. kids are subagents: their events only split the gaps, so that
+// a long wait on them isn't idle.
+function walk(p, kids = []) {
+  const pts = [];   // [time, event, is the end of a tool call, is a subagent's]
+  for (const [byId, kid] of [[p.byId, false], ...kids.map(k => [k.byId, true])])
+    for (const { e } of byId.values()) {
+      if (e.ts) pts.push([+new Date(e.ts), e, false, kid]);
+      if (e.end) pts.push([+new Date(e.end), e, true, kid]);
+    }
   pts.sort((a, b) => a[0] - b[0]);
   const segs = [], ctx = [], open = new Set();
   let last = pts[0]?.[0], done = false, waits = [], win = 0, compactions = 0;
-  for (const [at, e, end] of pts) {
+  for (const [at, e, end, kid] of pts) {
     const calls = [...open], ask = calls.find(c => ASKS.includes(c.name));
-    const kind = at - last > IDLE && !calls.some(c => c.end) ? 'idle'   // inside a call that did finish, a real wait
+    // A long gap is idle, unless a tool ran through it to the end (a long build). A question to you left
+    // overnight is idle too, like a prompt you answer the next day.
+    const kind = at - last > IDLE && !calls.some(c => c.end && !ASKS.includes(c.name)) ? 'idle'
       : done ? 'wait' : ask ? 'you' : calls.length ? 'tools' : 'model';
-    if (at > last) segs.push({ t0: last, t1: at, kind, e: ask || calls[0] || e });
+    if (at > last) segs.push({ t0: last, t1: at, kind, e: ask || calls[0] || (kid ? null : e) });
     if (at > last && kind === 'wait') waits.push(segs.at(-1));
     last = at;
+    if (kid) continue;
     if (end) { open.delete(e); continue; }
     if (done && !['meta', 'system'].includes(e.kind)) {   // working again: what woke it?
       for (const s of waits) Object.assign(s, { kind: e.kind === 'user' ? 'you' : 'background', e });
@@ -351,18 +372,26 @@ function walk(p) {
     const u = e.extra?.usage, k = e.extra?.tokens, c = e.extra?.last_token_usage;   // Claude Code, opencode, Codex
     const n = u ? (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
       : k ? (k.input || 0) + (k.cache?.read || 0) + (k.cache?.write || 0) : c?.input_tokens;
-    if (n) ctx.push([segs.length, n]);
+    if (n) ctx.push([at, n]);
     win = e.extra?.model_context_window || win;
     compactions += ['compact_boundary', 'compaction'].includes(e.name);
   }
   for (const s of waits) s.kind = 'you';   // still waiting on whatever comes next
-  return { segs, ctx, win, compactions };
+  for (let i = segs.length - 2; i >= 0; i--) segs[i].e ??= segs[i + 1].e;   // split by a subagent: the next row,
+  const out = [];
+  for (const s of segs) {   // then joined up again
+    const m = out.at(-1);
+    if (m?.kind === s.kind && m.e === s.e) m.t1 = s.t1; else out.push(s);
+  }
+  return { segs: out, ctx, win, compactions };
 }
+
+const kt = n => `${Math.round(n / 1e3)}k`;   // tokens
 
 function summary({ segs, ctx, win, compactions }) {
   const t = { model: 0, tools: 0, you: 0, background: 0, idle: 0 };
   for (const s of segs) t[s.kind] += s.t1 - s.t0;
-  const active = t.model + t.tools + t.you + t.background, kt = n => `${Math.round(n / 1e3)}k`;
+  const active = t.model + t.tools + t.you + t.background;
   const now = ctx.at(-1)?.[1], peak = Math.max(0, ...ctx.map(c => c[1]));
   if (!active) return '';
   return [
@@ -379,9 +408,10 @@ const svg = (tag, attrs) => {
   return e;
 };
 
-// The walk drawn along active time: a band coloured by what was pending, and the context size as a line under
-// it, scaled to the window when known, else to the peak. Idle gaps shrink to a sliver, so days-long sessions fit.
-// The SVG stretches to the pane's width; CSS hides it in narrow panes.
+// The walk drawn along active time: a band coloured by what was pending, a thin lane per subagent, and the
+// context size as a line, scaled to the window when known, else to the peak (the label says which).
+// Idle gaps shrink to a sliver, so days-long sessions fit. The SVG stretches to the pane's width; CSS hides it
+// in narrow panes.
 function strip(p, { segs, ctx, win }) {
   const active = segs.reduce((a, s) => a + (s.kind === 'idle' ? 0 : s.t1 - s.t0), 0);
   p.st.replaceChildren();
@@ -390,29 +420,47 @@ function strip(p, { segs, ctx, win }) {
   const brk = active * Math.min(.01, .15 / segs.filter(s => s.kind === 'idle').length);   // all idle: 15% at most
   const xs = [0];   // where each segment starts, and the end
   for (const s of segs) xs.push(xs.at(-1) + (s.kind === 'idle' ? brk : s.t1 - s.t0));
-  const W = xs.at(-1), g = svg('svg', { viewBox: `0 0 ${W} 40`, preserveAspectRatio: 'none' });
-  segs.forEach((s, i) => {
-    const r = svg('rect', { x: xs[i], width: xs[i + 1] - xs[i], height: s.kind === 'idle' ? 40 : 12,
-                            class: s.kind + (s.kind === 'tools' && s.e.error ? ' err' : '') });
+  const W = xs.at(-1);
+  const tx = p.tx = t => {   // a time -> its x on the strip
+    let lo = 0, hi = segs.length;
+    while (lo < hi) { const m = lo + hi >> 1; segs[m].t1 < t ? lo = m + 1 : hi = m; }
+    const s = segs[lo];
+    return s ? xs[lo] + (xs[lo + 1] - xs[lo]) * Math.max(0, t - s.t0) / (s.t1 - s.t0) : W;
+  };
+  const lanes = [...p.kids.values()].map(k => ({ k, segs: walk(k).segs })).filter(l => l.segs.length)
+    .sort((a, b) => a.segs[0].t0 - b.segs[0].t0);
+  const y0 = 14 + lanes.length * 8, H = y0 + 36;   // the band, a lane per subagent, the label, the context line
+  const g = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', height: H });
+  const rect = (s, y, h, head, go) => {
+    const x = tx(s.t0), r = svg('rect', { x, y, width: tx(s.t1) - x, height: h,
+                                          class: s.kind + (s.kind === 'tools' && s.e?.error ? ' err' : '') });
     r.append(svg('title', {}));
-    r.firstChild.textContent = `${s.kind} ${dur(s.t1 - s.t0)}\n${s.e.name || s.e.kind}: ${brief(s.e).slice(0, 100)}`;
-    r.onclick = () => {
-      const node = p.byId.get(s.e.id)?.node;
-      if (node) { node.open = true; node.scrollIntoView({ block: 'start' }); }
-    };
+    r.firstChild.textContent = `${head}${s.kind} ${dur(s.t1 - s.t0)}`
+      + (s.e ? `\n${s.e.name || s.e.kind}: ${brief(s.e).slice(0, 100)}` : '');
+    r.onclick = go;
     g.append(r);
+  };
+  for (const s of segs) rect(s, 0, s.kind === 'idle' ? H : 12, '', () => {
+    const node = p.byId.get(s.e?.id)?.node;
+    if (node) { node.open = true; node.scrollIntoView({ block: 'start' }); }
   });
-  const top = win || Math.max(...ctx.map(c => c[1]));
-  let line = '', y = 38;
-  for (const [i, n] of ctx) line += `${xs[i]},${y} ${xs[i]},${y = 38 - 24 * n / top} `;   // a step per API call
-  if (ctx.length) g.append(svg('polyline', { points: line + `${W},${y}`, class: 'ctx' }));
-  p.view = svg('rect', { height: 40, class: 'view' });
+  lanes.forEach(({ k, segs }, j) => {   // a click opens the subagent in a column of its own
+    for (const s of segs) if (s.kind !== 'idle')
+      rect(s, 14 + j * 8, 6, k.s.title + '\n', () => { if (!pane(k.s)) { openPane(k.s); sync(); } });
+  });
+  if (ctx.length) {
+    const top = win || Math.max(...ctx.map(c => c[1]));
+    const lv = n => H - 2 - 24 * n / top;
+    let line = '', y = lv(ctx[0][1]);
+    for (const [t, n] of ctx) line += `${tx(t)},${y} ${tx(t)},${y = lv(n)} `;   // a step per API call
+    g.append(svg('polyline', { points: line + `${W},${y}`, class: 'ctx' }));
+    const label = el('span', 'top', `${kt(top)} ${win ? 'window' : 'peak'}`);   // what the top of the line means
+    label.style.top = 4 + y0 + 'px';
+    p.st.append(label);
+  }
+  p.view = svg('rect', { height: H, class: 'view' });
   g.append(p.view);
   p.st.append(g);
-  p.tx = t => {   // a time -> its x on the strip
-    const i = segs.findIndex(s => t <= s.t1);
-    return i < 0 ? W : xs[i] + (segs[i].kind === 'idle' ? 0 : Math.max(0, t - segs[i].t0));
-  };
   inView(p);
 }
 
@@ -438,6 +486,7 @@ function upsert(p, e) {
   }
   const old = p.byId.get(e.id), json = JSON.stringify(e);
   if (old && old.json === json) return;
+  if (!p.box) return p.byId.set(e.id, { e, json });   // a subagent's lane: events only, no rows
   const node = row(e);
   if (old) { node.open = old.node.open; old.node.replaceWith(node); }
   else p.box.append(node);

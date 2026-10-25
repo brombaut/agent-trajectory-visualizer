@@ -34,7 +34,7 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 
 ## The terrain
 
-![Three sessions side by side, with a failed tool call and an assistant reply expanded](assets/screenshot.png)
+![Three sessions side by side, each with its time strip, the middle one with three subagent lanes; a failed tool call and an assistant reply expanded](assets/screenshot.png)
 
 - **Sessions** on the left, newest first, with subagent sessions nested under their parent. Each is tinted
   with its project's colour (a project is a working directory), and the dropdown above filters to one or more projects.
@@ -43,7 +43,8 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
   Click a line for the full text, tool inputs, output and token details, or hit **Expand all**.
   The line under a column's header says where the session's time went (the model, tools, you, background
   work, idle) and how full its context is; hover it for what each part means. In a wide column a strip under
-  it draws the same as a timeline, with the context size as a line; click a stretch to jump to it.
+  it draws the same as a timeline, with a lane per subagent and the context size as a line; click a stretch to
+  jump to it, or a lane to open that subagent.
 - **Side by side**: Ctrl+click (Cmd+click on macOS) a session to open it in another column, or again to
   close it. Drag the divider between two columns to resize
   them. The URL keeps the set of open sessions, so a reload restores it.

@@ -88,10 +88,13 @@ Focus is not in the hash.
   Each gap between timestamps goes to what was pending when it began: a tool call (`AskUserQuestion` and
   `ExitPlanMode` count as you), else the model. After a turn ends (per format: `turnEnd`) the wait is yours if
   a user event ends it, background otherwise (async subagents end the parent's turn and wake it with a task
-  notification). Gaps over 5 min are idle unless a call that later finished was open. `summary()` totals them in
-  the line under each pane's header; `strip()` draws them under that as an SVG band along active time (idle cut
-  to slivers) with the context size as a line, and clicking a segment opens its row. A container query hides the
-  strip in panes under 500px wide. Not done yet: a lane per subagent.
+  notification). Gaps over 5 min are idle unless a tool call that later finished was running (a question left
+  overnight is idle). `summary()` totals them in the line under each pane's header; `strip()` draws them under
+  that as an SVG band along active time (idle cut to slivers), a lane per subagent, and the context size as a
+  line labelled with its scale (the window if known, else the peak). Clicking a segment opens its row, clicking a
+  lane opens that subagent's pane. A pane polls its subagents too (`p.kids`, events only, refetched when their
+  `updated` changes); their timestamps split the parent's gaps, so waiting on them isn't idle. A container query
+  hides the strip in panes under 500px wide.
 - A project is a session's working directory; subagents inherit their parent's project. Grouping is done in the browser.
 - **Project colours**: hashed from the project path in the browser (`hue`), unless the config file's `projects`
   gives that directory a `color`; `sessions()` then sends it as `color` and the browser uses it as is (`paint`).
