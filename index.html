@@ -566,19 +566,21 @@ for (const grip of document.querySelectorAll('body > .grip')) {   // drag to set
   };
   grip.onpointerup = () => grip.onpointermove = null;
 }
-$('meta').onchange = e => $('panes').classList.toggle('show-meta', e.target.checked);
-$('details').onchange = e => $('panes').classList.toggle('show-details', e.target.checked);
+// The view settings change row heights; a pane that was at the bottom stays there (#19).
+function keepBottom(f) {
+  const at = panes.filter(p => atBottom(p.box));
+  f();
+  for (const p of at) p.box.scrollTop = p.box.scrollHeight;
+}
+for (const [id, cls] of [['meta', 'show-meta'], ['details', 'show-details']])
+  $(id).onchange = e => keepBottom(() => $('panes').classList.toggle(cls, e.target.checked));
 $('live').onclick = openLive;
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && focused) focus(null); });
-$('expand').onclick = () => {
+$('expand').onclick = () => keepBottom(() => {
   expanded = !expanded;
   $('expand').textContent = expanded ? 'Collapse all' : 'Expand all';
-  for (const p of panes) {   // a pane at the bottom stays there
-    const follow = atBottom(p.box);
-    for (const { e, node } of p.byId.values()) setOpen(node, e, expanded);
-    if (follow) p.box.scrollTop = p.box.scrollHeight;
-  }
-};
+  for (const p of panes) for (const { e, node } of p.byId.values()) setOpen(node, e, expanded);
+});
 
 async function loop(fn, ms) {
   try { await fn(); } catch (err) { console.error(err); }

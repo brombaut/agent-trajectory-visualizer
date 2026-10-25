@@ -86,6 +86,9 @@ Focus is not in the hash.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
 - An expanded row's `details` section (`extra` as JSON) is hidden unless the details box is ticked (`show-details`),
   except in rows with nothing else to show, which is most `meta` rows (issue #16).
+- A pane follows the bottom if it is within 80px of it when it polls. Row bodies are built when first opened; a row
+  opened in code (Expand all, an open row replaced in place) builds its body at once (`setOpen`), and the view
+  settings go through `keepBottom`, so neither leaves a following pane short of the bottom (issue #19).
 - **Where the time went** (issue #14): `walk()` turns a pane's events into segments, in the browser.
   Each gap between timestamps goes to what was pending when it began: a tool call (`AskUserQuestion` and
   `ExitPlanMode` count as you), else the model. After a turn ends (per format: `turnEnd`) the wait is yours if
