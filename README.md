@@ -53,6 +53,7 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
   **Open live** opens every session still running (within the project filter and search) and closes the rest.
 - **meta** shows the background records hidden by default: system reminders, hook output, attachments.
 - **details** adds each expanded line's raw metadata (model, token usage, stop reason) as JSON.
+- **raw** shows assistant replies as the markdown text they were written in, instead of rendered.
 
 ## Where it looks
 

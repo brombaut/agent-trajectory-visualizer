@@ -75,6 +75,8 @@
   .show-meta .ev.meta { display: block; }
   .extra { display: none; }
   .show-details .extra { display: block; }
+  .raw, .show-raw .md { display: none; }
+  .show-raw .raw { display: block; }
   summary { display: flex; gap: 10px; padding: 4px 8px; cursor: pointer; list-style: none; }
   summary::-webkit-details-marker { display: none; }
   summary:hover { background: #0000000a; }
@@ -88,6 +90,20 @@
   h4 { margin: 8px 0 2px; font-size: 11px; color: #595959; font-weight: 400; text-transform: uppercase; }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; cursor: auto; }
   h4 + pre { background: #d8d8d8; padding: 6px 8px; border-radius: 4px; max-height: 60vh; overflow: auto; }
+  /* an assistant message rendered as markdown: md() */
+  .md { white-space: pre-line; overflow-wrap: anywhere; cursor: auto; }
+  .md :is(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4, h5, h6) { margin: 0 0 8px; }
+  .md li > :is(p, ul, ol), .md > :last-child { margin: 0; }
+  .md :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; color: inherit; font-weight: 700; text-transform: none; }
+  .md :is(h1, h2) { font-size: 15px; }
+  .md :is(ul, ol) { padding-left: 2em; }
+  .md :is(pre, code) { background: #d8d8d8; border-radius: 4px; }
+  .md pre { padding: 6px 8px; overflow: auto; }
+  .md code { padding: 0 3px; }
+  .md blockquote { padding-left: 10px; border-left: 3px solid #b4b4b4; color: #595959; }
+  .md table { border-collapse: collapse; }
+  .md :is(th, td) { border: 1px solid #b4b4b4; padding: 2px 6px; text-align: left; vertical-align: top; }
+  .md hr { border: 0; border-top: 1px solid #b4b4b4; }
 </style>
 
 <aside>
@@ -100,6 +116,7 @@
   <header>
     <label><input type="checkbox" id="meta"> meta</label>
     <label title="In expanded rows, also show the raw metadata: model, token usage, stop reason…"><input type="checkbox" id="details"> details</label>
+    <label title="Show assistant messages as the plain markdown text, not rendered"><input type="checkbox" id="raw"> raw</label>
     <button id="live" title="Open every running top-level session in the list; close the other panes">Open live</button>
     <button id="expand">Expand all</button>
   </header>
@@ -531,7 +548,7 @@ function row(e, open) {
   d.addEventListener('toggle', () => { if (d.open) setOpen(d, e, true); });   // opened by a click
   // Clicking the expanded area around the content collapses it (but not while selecting text).
   d.addEventListener('click', ev => {
-    if (ev.target.closest('.body') && !ev.target.closest('pre') && !getSelection().toString()) d.open = false;
+    if (ev.target.closest('.body') && !ev.target.closest('pre, .md') && !getSelection().toString()) d.open = false;
   });
   setOpen(d, e, open);
   return d;
@@ -544,7 +561,8 @@ function body(e) {
     if (label) b.append(el('h4', cls, label));
     b.append(el('pre', cls, typeof v === 'string' ? v : JSON.stringify(v, null, 2)));
   };
-  sec(null, e.text);
+  if (e.kind === 'assistant' && e.text) b.append(md(e.text));   // the raw text below shows instead if raw is ticked
+  sec(null, e.text, e.kind === 'assistant' ? 'raw' : '');
   if (e.kind === 'tool') {
     // description first: it gives context before the command itself
     const input = Object.entries(e.input || {}).sort(([a], [b]) => (b === 'description') - (a === 'description'));
@@ -554,6 +572,91 @@ function body(e) {
   // hidden unless the details box is ticked, except in rows with nothing else to show (most meta rows)
   sec('details', e.extra, b.children.length ? 'extra' : '');
   return b;
+}
+
+// Markdown as agents write it (#18): headings, lists, code, tables, quotes, bold and italic, http(s) links. Built with
+// el() and text nodes, never innerHTML; anything not recognised stays as text. Half-streamed text renders as it is.
+const LI = /^( *)([-*+]|\d{1,9}[.)])(?: +|$)(.*)/, FENCE = /^ *(`{3,}|~{3,})/, HEAD = /^ {0,3}(#{1,6}) +(.*?)(?: +#+)? *$/,
+      HR = /^ {0,3}([-*_])( *\1){2,} *$/, SEP = /^ *\|? *:?-+:? *(\| *:?-+:? *)*\|? *$/;
+const cells = l => l.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
+const isTable = (l, next) => l.includes('|') && SEP.test(next ?? '') && next.includes('|');
+
+function md(text, node = el('div', 'md')) {
+  const lines = text.split('\n'), ind = l => l.match(/^ */)[0].length;
+  for (let i = 0, m; i < lines.length;) {
+    const l = lines[i];
+    if (!l.trim()) i++;
+    else if (m = l.match(FENCE)) {   // runs to the end if never closed
+      let j = i + 1;
+      while (j < lines.length && !(/^(`+|~+)$/.test(lines[j].trim()) && lines[j].trim().startsWith(m[1]))) j++;
+      node.append(el('pre', null, lines.slice(i + 1, j).join('\n')));
+      i = j + 1;
+    } else if (m = l.match(HEAD)) {
+      node.append(inline(el('h' + m[1].length), m[2]));
+      i++;
+    } else if (HR.test(l)) {
+      node.append(el('hr'));
+      i++;
+    } else if (/^ *>/.test(l)) {
+      let j = i;
+      while (j < lines.length && /^ *>/.test(lines[j])) j++;
+      node.append(md(lines.slice(i, j).map(x => x.replace(/^ *> ?/, '')).join('\n'), el('blockquote')));
+      i = j;
+    } else if (isTable(l, lines[i + 1])) {
+      const t = el('table'), tr = (l, tag) => {
+        const r = el('tr');
+        for (const c of cells(l)) r.append(inline(el(tag), c));
+        t.append(r);
+      };
+      tr(l, 'th');
+      for (i += 2; i < lines.length && lines[i].includes('|') && lines[i].trim(); i++) tr(lines[i], 'td');
+      node.append(t);
+    } else if (m = l.match(LI)) {
+      // An item is its marker's line plus the lines indented past the marker, rendered with md() itself,
+      // so nested lists and code in items come for free.
+      const at = m[1].length, ordered = /\d/.test(m[2]), list = el(ordered ? 'ol' : 'ul');
+      if (ordered) list.start = parseInt(m[2]);
+      while (m && m[1].length === at && /\d/.test(m[2]) === ordered) {
+        const w = at + m[2].length + 1, item = [m[3]];
+        for (i++; i < lines.length && (!lines[i].trim() || ind(lines[i]) > at); i++)
+          item.push(lines[i].slice(Math.min(w, ind(lines[i]))));
+        list.append(md(item.join('\n'), el('li')));
+        m = lines[i]?.match(LI);
+      }
+      node.append(list);
+    } else {   // a paragraph: up to a blank line or the start of anything above
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim() && !FENCE.test(lines[j]) && !HEAD.test(lines[j]) && !HR.test(lines[j])
+             && !/^ *>/.test(lines[j]) && !LI.test(lines[j]) && !isTable(lines[j], lines[j + 1])) j++;
+      node.append(inline(el('p'), lines.slice(i, j).map(x => x.trim()).join('\n')));
+      i = j;
+    }
+  }
+  return node;
+}
+
+// code spans, **bold**, *italic*, [text](http(s) url), bare http(s) urls
+const INLINE = /(?<!`)(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*(\S(?:[\s\S]*?\S)?)\*\*|\*(\S(?:[\s\S]*?\S)?)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]*])/g;
+
+function inline(node, s) {
+  let at = 0;
+  for (const m of s.matchAll(INLINE)) {
+    const [, , code, bold, em, text, url, bare] = m;
+    node.append(s.slice(at, m.index));
+    at = m.index + m[0].length;
+    if (code != null) node.append(el('code', null, code));
+    else if (bold != null) node.append(inline(el('strong'), bold));
+    else if (em != null) node.append(inline(el('em'), em));
+    else {
+      const a = el('a', null, text ?? bare);   // opened in a new tab; the desktop app sends it to the system browser
+      a.href = url ?? bare;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      node.append(a);
+    }
+  }
+  node.append(s.slice(at));
+  return node;
 }
 
 $('q').oninput = renderList;
@@ -572,7 +675,7 @@ function keepBottom(f) {
   f();
   for (const p of at) p.box.scrollTop = p.box.scrollHeight;
 }
-for (const [id, cls] of [['meta', 'show-meta'], ['details', 'show-details']])
+for (const [id, cls] of [['meta', 'show-meta'], ['details', 'show-details'], ['raw', 'show-raw']])
   $(id).onchange = e => keepBottom(() => $('panes').classList.toggle(cls, e.target.checked));
 $('live').onclick = openLive;
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && focused) focus(null); });
