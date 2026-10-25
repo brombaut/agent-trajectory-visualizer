@@ -84,12 +84,14 @@ Focus is not in the hash.
 - **Startup line**: after binding, the server prints `listening on http://127.0.0.1:<port>` and flushes.
   `electron/main.js` parses the port from it, so keep the wording and the flush.
 - `meta` events (system reminders, hook output, attachments) are sent but hidden unless the meta box is ticked.
-- **Time summary** (the line under each pane's header, `summary()`): computed in the browser from the pane's events.
+- **Where the time went** (issue #14): `walk()` turns a pane's events into segments, in the browser.
   Each gap between timestamps goes to what was pending when it began: a tool call (`AskUserQuestion` and
   `ExitPlanMode` count as you), else the model. After a turn ends (per format: `turnEnd`) the wait is yours if
   a user event ends it, background otherwise (async subagents end the parent's turn and wake it with a task
-  notification). Gaps over 5 min are idle unless a call that later finished was open. First step of issue #14,
-  a per-session timeline strip.
+  notification). Gaps over 5 min are idle unless a call that later finished was open. `summary()` totals them in
+  the line under each pane's header; `strip()` draws them under that as an SVG band along active time (idle cut
+  to slivers) with the context size as a line, and clicking a segment opens its row. A container query hides the
+  strip in panes under 500px wide. Not done yet: a lane per subagent.
 - A project is a session's working directory; subagents inherit their parent's project. Grouping is done in the browser.
 - **Project colours**: hashed from the project path in the browser (`hue`), unless the config file's `projects`
   gives that directory a `color`; `sessions()` then sends it as `color` and the browser uses it as is (`paint`).

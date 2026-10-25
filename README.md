@@ -42,7 +42,8 @@ adding ATV to the application menu, see [electron/README.md](electron/README.md)
 - **Trajectory** on the right: one line per user message, assistant reply and tool call.
   Click a line for the full text, tool inputs, output and token details, or hit **Expand all**.
   The line under a column's header says where the session's time went (the model, tools, you, background
-  work, idle) and how full its context is; hover it for what each part means.
+  work, idle) and how full its context is; hover it for what each part means. In a wide column a strip under
+  it draws the same as a timeline, with the context size as a line; click a stretch to jump to it.
 - **Side by side**: Ctrl+click (Cmd+click on macOS) a session to open it in another column, or again to
   close it. Drag the divider between two columns to resize
   them. The URL keeps the set of open sessions, so a reload restores it.
