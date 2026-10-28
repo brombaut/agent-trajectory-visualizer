@@ -31,6 +31,8 @@
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   header { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-bottom: 1px solid #b4b4b4; }
   button { font: inherit; color: inherit; background: #e4e4e4; border: 1px solid #b4b4b4; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  #find { min-width: 80px; width: 220px; margin-right: auto; font: inherit; color: inherit; background: #e4e4e4; border: 1px solid #b4b4b4; border-radius: 4px; padding: 3px 8px; }
+  .matches { flex: none; font-size: 11px; font-weight: 400; }
   #panes { flex: 1; min-height: 0; display: flex; }
   #panes:empty::before { content: 'Select a session'; padding: 12px; color: #595959; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -73,6 +75,7 @@
   .ev.err { --k: #ff3b3b; }
   .ev.meta { display: none; opacity: .6; }
   .show-meta .ev.meta { display: block; }
+  .find .ev.miss { display: none; }
   .extra { display: none; }
   .show-details .extra { display: block; }
   .raw, .show-raw .md { display: none; }
@@ -114,6 +117,7 @@
 <div class="grip"></div>
 <main>
   <header>
+    <input id="find" type="search" placeholder="find in open panes…" aria-label="Find in open panes" title="Filter events by text, tool inputs, outputs and metadata (case-insensitive)">
     <label><input type="checkbox" id="meta"> meta</label>
     <label title="In expanded rows, also show the raw metadata: model, token usage, stop reason…"><input type="checkbox" id="details"> details</label>
     <label title="Show assistant messages and thinking blocks as plain markdown text, not rendered"><input type="checkbox" id="raw"> raw</label>
@@ -132,7 +136,7 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-let sessions = [], projects = new Set() /* cwds to list; empty = all */, expanded = false, focused = null;
+let sessions = [], projects = new Set() /* cwds to list; empty = all */, expanded = false, focused = null, findQuery = '';
 const panes = [];   // open sessions, one column each: {s, cursor, byId: event id -> {e, json, node}, node, box, ti}
 
 const ago = ms => {
@@ -231,7 +235,9 @@ async function loadSessions() {
 
 function openPane(s) {
   const p = { s, cursor: 0, byId: new Map(), node: el('div', 'pane'), box: el('div', 'events'),
-              ti: el('span', 'ti', paneTitle(s)), tl: el('div', 'tl'), st: el('div', 'strip'), kids: new Map() };
+              ti: el('span', 'ti', paneTitle(s)), tl: el('div', 'tl'), st: el('div', 'strip'), kids: new Map(),
+              count: el('span', 'matches'), matches: 0 };
+  findCount(p);
   p.box.onscroll = () => inView(p);
   p.ti.title = s.cwd;
   const head = el('div', 'ph'), f = el('button', '', '⤢'), x = el('button', '', '×');
@@ -239,7 +245,7 @@ function openPane(s) {
   f.onclick = () => focus(focused === p ? null : p);
   x.title = 'Close';
   x.onclick = () => { closePane(p); sync(); };
-  head.append(p.ti, f, x);
+  head.append(p.ti, p.count, f, x);
   const grip = el('div', 'grip');   // drag a column's left edge to trade width with the column before it
   grip.onpointerdown = ev => {
     const a = p.node.previousElementSibling, b = p.node, wa = a.offsetWidth, wb = b.offsetWidth, x = ev.clientX;
@@ -498,6 +504,24 @@ function inView(p) {   // outline the part of the strip that the event list show
   p.view.setAttribute('width', x1 - x0);
 }
 
+// Search the full serialized event, including folded tool output, without building row bodies.
+// Counts include only visible matches: meta still needs its checkbox.
+function findEvent({ e, json, node }) {
+  const miss = !!findQuery && !json.toLowerCase().includes(findQuery);
+  node.classList.toggle('miss', miss);
+  return !miss && (e.kind !== 'meta' || $('meta').checked);
+}
+
+function findCount(p) {
+  p.count.textContent = findQuery ? `${p.matches} ${p.matches === 1 ? 'match' : 'matches'}` : '';
+}
+
+function findPane(p) {
+  p.matches = 0;
+  for (const item of p.byId.values()) p.matches += findEvent(item);
+  findCount(p);
+}
+
 function upsert(p, e) {
   if (e.kind === 'result') {   // Claude logs tool results as separate records; fold into the call
     const call = p.byId.get(e.tool);
@@ -510,7 +534,10 @@ function upsert(p, e) {
   const node = row(e, old ? old.node.open : expanded);
   if (old) old.node.replaceWith(node);
   else p.box.append(node);
-  p.byId.set(e.id, { e, json, node });
+  const item = { e, json, node };
+  p.matches += findEvent(item) - (old ? findEvent(old) : 0);
+  p.byId.set(e.id, item);
+  findCount(p);
 }
 
 function brief(e) {
@@ -697,8 +724,16 @@ function keepBottom(f) {
   f();
   for (const p of at) p.box.scrollTop = p.box.scrollHeight;
 }
+$('find').oninput = () => keepBottom(() => {
+  findQuery = $('find').value.toLowerCase();
+  $('panes').classList.toggle('find', !!findQuery);
+  panes.forEach(findPane);
+});
 for (const [id, cls] of [['meta', 'show-meta'], ['details', 'show-details'], ['raw', 'show-raw']])
-  $(id).onchange = e => keepBottom(() => $('panes').classList.toggle(cls, e.target.checked));
+  $(id).onchange = e => keepBottom(() => {
+    $('panes').classList.toggle(cls, e.target.checked);
+    if (id === 'meta') panes.forEach(findPane);
+  });
 $('live').onclick = openLive;
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && focused) focus(null); });
 $('expand').onclick = () => keepBottom(() => {
