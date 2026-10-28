@@ -707,10 +707,11 @@ $('expand').onclick = () => keepBottom(() => {
   for (const p of panes) for (const { e, node } of p.byId.values()) setOpen(node, e, expanded);
 });
 
+// Poll often so open sessions feel live (a poll with nothing new is one stat or query); a hidden tab backs off.
 async function loop(fn, ms) {
   try { await fn(); } catch (err) { console.error(err); }
-  setTimeout(loop, ms, fn, ms);
+  setTimeout(loop, document.hidden ? Math.max(ms, 5000) : ms, fn, ms);
 }
-loop(loadSessions, 5000);
-loop(() => Promise.all(panes.map(p => poll(p).catch(console.error))), 1500);
+loop(loadSessions, 2000);
+loop(() => Promise.all(panes.map(p => poll(p).catch(console.error))), 500);
 </script>
