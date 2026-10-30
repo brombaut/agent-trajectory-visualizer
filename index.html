@@ -16,9 +16,17 @@
   .sw, .s, .pane { --p: oklch(.85 .3 var(--h)); }
   .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--p); }
   #list { overflow-y: auto; flex: 1; margin-top: 8px; }
-  .s { padding: 6px 10px; cursor: pointer; border-left: 6px solid var(--p); border-bottom: 1px solid #c6c6c6; }
-  .s:hover { background: #c8c8c8; }
+  .s { padding: 6px 10px; cursor: pointer; border-left: 6px solid var(--p); border-bottom: 1px solid #c6c6c6;
+       display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: center;
+       background: color-mix(in srgb, var(--p) 30%, transparent); }
+  .s:hover { background: color-mix(in srgb, var(--p) 55%, transparent); }
   .s.active, .s.active * { background: var(--p); color: #000; }
+  /* a session's avatar: avatar(), a head and shoulders on the session's own colour (--l, --a); after .s.active * */
+  .s .av, .ph .av { flex: none; width: 34px; height: 34px; border-radius: 50%;
+    background: radial-gradient(ellipse 19% 19% at 50% 39%, #fff 92%, #0000),
+                radial-gradient(ellipse 34% 30% at 50% 94%, #fff 96%, #0000), oklch(var(--l) .16 var(--a)); }
+  .s .av { grid-row: span 2; }
+  .ph .av { width: 22px; height: 22px; }
   .s .ti, .ph .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .s .sub { color: #595959; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -147,12 +155,22 @@ const key = s => `${s.source}/${s.id}`;
 const pane = s => panes.find(p => key(p.s) === key(s));
 const adding = ev => ev.ctrlKey || ev.metaKey;   // Ctrl/Cmd+click adds a column instead of replacing
 
-const hue = p => {   // a project's colour: hashed from its path, so it never changes
+const hash = t => {   // the same on every load, so colours and markers never change
   let h = 0;
-  for (const c of p) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return (h % 310 + 300) % 360;   // skips 250-300: blue and purple only come out pastel, not neon
+  for (const c of t) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h;
 };
+// a project's colour, hashed from its path; skips 250-300: blue and purple only come out pastel, not neon
+const hue = p => (hash(p) % 310 + 300) % 360;
 const paint = (node, project, color) => node.style.setProperty(...color ? ['--p', color] : ['--h', hue(project)]);
+// A session's avatar: a silhouette on a colour hashed from its key, to tell apart the sessions of one project (#24).
+// ponytail: a hue and one of three lightnesses, so two sessions can still land on near colours.
+const avatar = s => {
+  const a = el('span', 'av'), h = hash(key(s));
+  a.style.setProperty('--a', h % 360);
+  a.style.setProperty('--l', [.45, .6, .75][(h / 360 | 0) % 3]);
+  return a;
+};
 const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
 const name = cwd => cwd.split('/').pop() || '(unknown)';   // a project's display name: its last directory
 const paneTitle = s => `${name(s.project)}  ·  ${title(s)}`;   // project first, then the session
@@ -203,7 +221,7 @@ function renderList() {
     const cwd = el('span', 'cwd', name(s.project));   // the project, so a subagent in a subdirectory still shows it
     cwd.title = s.cwd;
     sub.append(el('span', 'src ' + s.source, s.source), cwd, stamp(s.updated));
-    d.append(el('div', 'ti', title(s)), sub);
+    d.append(avatar(s), el('div', 'ti', title(s)), sub);
     d.title = s.title;
     d.onclick = ev => adding(ev) ? toggle(s) : select(s);
     return d;
@@ -245,7 +263,7 @@ function openPane(s) {
   f.onclick = () => focus(focused === p ? null : p);
   x.title = 'Close';
   x.onclick = () => { closePane(p); sync(); };
-  head.append(p.ti, p.count, f, x);
+  head.append(avatar(s), p.ti, p.count, f, x);
   const grip = el('div', 'grip');   // drag a column's left edge to trade width with the column before it
   grip.onpointerdown = ev => {
     const a = p.node.previousElementSibling, b = p.node, wa = a.offsetWidth, wb = b.offsetWidth, x = ev.clientX;
