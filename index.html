@@ -11,9 +11,9 @@
   #proj summary { display: block; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #projs { max-height: 50vh; overflow-y: auto; margin-top: 6px; }
   #projs label { display: flex; gap: 6px; align-items: center; cursor: pointer; white-space: nowrap; }
-  /* --h is the project hue, set on swatches, session rows and panes; --p is that project's plastics colour.
+  /* --h is the project hue, set on swatches, session rows and panes (and a session's own on its avatar); --p is that project's plastics colour.
      A project with a colour in the config file gets --p set directly instead. */
-  .sw, .s, .pane { --p: oklch(.85 .3 var(--h)); }
+  .sw, .s, .pane, .av { --p: oklch(.85 .3 var(--h)); }
   .sw { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--p); }
   #list { overflow-y: auto; flex: 1; margin-top: 8px; }
   .s { padding: 6px 10px; cursor: pointer; border-left: 6px solid var(--p); border-bottom: 1px solid #c6c6c6;
@@ -21,12 +21,12 @@
        background: color-mix(in srgb, var(--p) 30%, transparent); }
   .s:hover { background: color-mix(in srgb, var(--p) 55%, transparent); }
   .s.active, .s.active * { background: var(--p); color: #000; }
-  /* a session's avatar: avatar(), a head and shoulders on the session's own colour (--l, --a); after .s.active * */
-  .s .av, .ph .av { flex: none; width: 34px; height: 34px; border-radius: 50%;
-    background: radial-gradient(ellipse 19% 19% at 50% 39%, #fff 92%, #0000),
-                radial-gradient(ellipse 34% 30% at 50% 94%, #fff 96%, #0000), oklch(var(--l) .16 var(--a)); }
+  /* a session's avatar: avatar(), a pixel agent in its own plastics colour on a dark tile; after .s.active *.
+     Sizes are multiples of the 7-unit viewBox, so its pixels stay crisp. */
+  .s .av, .ph .av { flex: none; width: 35px; height: 35px; border-radius: 4px; background: #211e1e;
+                    fill: var(--p); shape-rendering: crispEdges; }
   .s .av { grid-row: span 2; }
-  .ph .av { width: 22px; height: 22px; }
+  .ph .av { width: 21px; height: 21px; border-radius: 3px; }
   .s .ti, .ph .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .s .sub { color: #595959; font-size: 11px; display: flex; gap: 6px; }
   .s .sub .cwd { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -163,13 +163,17 @@ const hash = t => {   // the same on every load, so colours and markers never ch
 // a project's colour, hashed from its path; skips 250-300: blue and purple only come out pastel, not neon
 const hue = p => (hash(p) % 310 + 300) % 360;
 const paint = (node, project, color) => node.style.setProperty(...color ? ['--p', color] : ['--h', hue(project)]);
-// A session's avatar: a silhouette on a colour hashed from its key, to tell apart the sessions of one project (#24).
-// ponytail: a hue and one of three lightnesses, so two sessions can still land on near colours.
+// A session's avatar: a pixel agent whose shape and colour are hashed from its key, to tell apart the sessions of
+// one project (#24). A fixed face with antennae, ears, cheeks, mouth and legs from the hash: # always on, . always
+// off, each letter a bit of the hash, mirrored down the middle.
+const SPRITE = ['a.b.a', 'c###c', '#.#.#', 'd#h#d', 'efgfe'];
 const avatar = s => {
-  const a = el('span', 'av'), h = hash(key(s));
-  a.style.setProperty('--a', h % 360);
-  a.style.setProperty('--l', [.45, .6, .75][(h / 360 | 0) % 3]);
-  return a;
+  const h = hash(key(s)), g = svg('svg', { viewBox: '-1 -1 7 7', class: 'av' });
+  paint(g, key(s));
+  SPRITE.forEach((row, y) => [...row].forEach((c, x) => {
+    if (c === '#' || c !== '.' && h >> 9 + c.charCodeAt(0) - 97 & 1) g.append(svg('rect', { x, y, width: 1, height: 1 }));
+  }));
+  return g;
 };
 const title = s => (s.waiting ? '🔔 ' : '') + (s.depth ? '↳ ' : '') + s.title;   // bell: waiting for the human
 const name = cwd => cwd.split('/').pop() || '(unknown)';   // a project's display name: its last directory

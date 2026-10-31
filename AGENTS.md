@@ -106,7 +106,7 @@ Focus is not in the hash.
 - A project is a session's working directory; subagents inherit their parent's project. Grouping is done in the browser.
 - **Project colours**: hashed from the project path in the browser (`hue`), unless the config file's `projects`
   gives that directory a `color`; `sessions()` then sends it as `color` and the browser uses it as is (`paint`).
-- **Session avatars** (issue #24): a CSS head-and-shoulders silhouette on a colour hashed from the session key
+- **Session avatars** (issue #24): a 5×5 pixel agent (`SPRITE`) whose shape and plastics colour are hashed from the session key
   (`avatar`), so sessions of one project can be told apart. Shown at the left of each list row and pane header.
 - **Waiting for the human** (`waiting` on a session, shown as a bell): for Claude Code it comes from the
   `<pid>.json` status files in the `sessions` dir beside each projects root (`claude_live`), counting `idle`
